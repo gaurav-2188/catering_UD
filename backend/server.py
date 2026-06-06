@@ -533,13 +533,17 @@ async def update_booking(booking_id: str, body: BookingUpdate, user: dict = Depe
         update["end_at"] = new_end
     if "items" in update:
         update["items"] = [i if isinstance(i, dict) else i.model_dump() for i in update["items"]]
+    # Only touch the cached total_amount when a price-affecting field actually changed.
+    # Status-only flips (Mark Completed / Cancel) become a single-column UPDATE.
+    _price_keys = {"items", "num_people", "discount_amount", "discount_percent", "transportation_cost", "gst_percent"}
+    needs_total_refresh = bool(_price_keys & set(update.keys()))
     for k, v in update.items():
         setattr(bk, k, v)
-    # Recompute cached total_amount whenever a price-affecting field changes
-    bk.total_amount = _compute_total_amount(
-        bk.items, bk.num_people, float(bk.discount_amount or 0), float(bk.discount_percent or 0),
-        float(bk.transportation_cost or 0), float(bk.gst_percent or 18),
-    )
+    if needs_total_refresh:
+        bk.total_amount = _compute_total_amount(
+            bk.items, bk.num_people, float(bk.discount_amount or 0), float(bk.discount_percent or 0),
+            float(bk.transportation_cost or 0), float(bk.gst_percent or 18),
+        )
     await db.commit(); await db.refresh(bk)
     return _booking_dict(bk)
 

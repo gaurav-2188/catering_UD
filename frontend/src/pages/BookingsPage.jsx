@@ -22,6 +22,10 @@ function monthMatrix(year, month) {
 }
 const fmtYMD = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 
+// Module-level flag so we only skip the very first /bookings fetch on initial app boot,
+// not every time the user navigates back to this page.
+let _bootstrapConsumed = false;
+
 export default function BookingsPage({ branches, branchId, settings, initialBookings = [] }) {
   const { user } = useAuth();
   const [bookings, setBookings] = useState(initialBookings);
@@ -32,19 +36,26 @@ export default function BookingsPage({ branches, branchId, settings, initialBook
   const [editing, setEditing] = useState(null);
   const [conflict, setConflict] = useState(null);
   const [confirm, setConfirm] = useState(null);
-  // Skip the first refetch if we already have bootstrap data — eliminates a redundant /bookings RTT on page load.
-  const skipFirstFetch = React.useRef(initialBookings && initialBookings.length >= 0 && initialBookings === bookings);
+  // Skip the first refetch ONCE on the initial app boot — subsequent navigations always re-fetch.
+  const skipFirstFetch = React.useRef(!_bootstrapConsumed && initialBookings && initialBookings.length >= 0);
+  // While optimistic ops are in flight we don't want realtime to clobber the local placeholder.
+  const pendingOps = React.useRef(0);
 
   const effectiveBranchId = user.role === "admin" ? branchId : user.branch_id;
 
   const load = async () => {
+    if (pendingOps.current > 0) return; // server-of-truth refresh will happen after the in-flight op settles
     const params = user.role === "admin" && effectiveBranchId && effectiveBranchId !== "all" ? { branch_id: effectiveBranchId } : {};
     const r = await api.get("/bookings", { params });
     setBookings(r.data);
   };
 
   useEffect(() => {
-    if (skipFirstFetch.current) { skipFirstFetch.current = false; return; }
+    if (skipFirstFetch.current) {
+      _bootstrapConsumed = true;
+      skipFirstFetch.current = false;
+      return;
+    }
     load();
     /* eslint-disable-next-line */
   }, [effectiveBranchId]);
@@ -77,35 +88,79 @@ export default function BookingsPage({ branches, branchId, settings, initialBook
   const cells = monthMatrix(cursor.getFullYear(), cursor.getMonth());
 
   const submitBooking = async (payload, ignore_conflict = false) => {
-    try {
-      const final = { ...payload, ignore_conflict };
-      if (editing) {
-        await api.patch(`/bookings/${editing.id}`, final);
+    const final = { ...payload, ignore_conflict };
+    // EDIT path: keep the simpler await-then-replace flow so we don't lose the
+    // user's pending edits if the patch fails.
+    if (editing) {
+      try {
+        const r = await api.patch(`/bookings/${editing.id}`, final);
+        setBookings((prev) => prev.map((b) => (b.id === editing.id ? r.data : b)));
         toast.success("Booking updated");
-      } else {
-        await api.post("/bookings", final);
-        toast.success("Booking created");
+        setFormOpen(false); setEditing(null); setConflict(null);
+      } catch (e) {
+        const det = e.response?.data?.detail;
+        if (e.response?.status === 409 && det?.code === "TIME_CONFLICT") {
+          setConflict({ existing_id: det.existing_id, pendingPayload: payload });
+        } else {
+          toast.error(typeof det === "string" ? det : "Failed to save booking");
+        }
       }
-      setFormOpen(false); setEditing(null); setConflict(null);
-      load();
+      return;
+    }
+
+    // CREATE path: instant modal close + temporary placeholder on the calendar,
+    // then quiet background sync.
+    const branchGst = branches.find((b) => b.id === payload.branch_id)?.gst_percent ?? 18;
+    const tmpId = `tmp_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+    const optimistic = {
+      id: tmpId, status: "booked", _optimistic: true,
+      created_at: new Date().toISOString(), created_by: user.id,
+      gst_percent: branchGst, total_amount: 0,
+      ...payload,
+    };
+    setBookings((prev) => [...prev, optimistic]);
+    setFormOpen(false); setEditing(null); setConflict(null);
+    pendingOps.current += 1;
+    try {
+      const r = await api.post("/bookings", final);
+      setBookings((prev) => prev.map((b) => (b.id === tmpId ? r.data : b)));
+      toast.success("Booking created");
     } catch (e) {
+      setBookings((prev) => prev.filter((b) => b.id !== tmpId));
       const det = e.response?.data?.detail;
       if (e.response?.status === 409 && det?.code === "TIME_CONFLICT") {
+        // Reopen the form with the payload preserved, plus the conflict modal.
+        setEditing(null);
+        setFormOpen(false);
         setConflict({ existing_id: det.existing_id, pendingPayload: payload });
       } else {
-        toast.error(typeof det === "string" ? det : "Failed to save booking");
+        toast.error(typeof det === "string" ? det : "Failed to save booking — please try again.");
+        // Reopen the form so the user doesn't lose their input.
+        setEditing(null);
+        setFormOpen(true);
       }
+    } finally {
+      pendingOps.current = Math.max(0, pendingOps.current - 1);
     }
   };
 
   const performStatusChange = async (bk, status) => {
+    const snapshot = bookings;
+    // Optimistic: instantly flip the local status so the calendar/archive update without waiting.
+    setBookings((arr) => arr.map((b) => (b.id === bk.id ? { ...b, status } : b)));
+    setConfirm(null);
+    setOpenBooking(null);
+    pendingOps.current += 1;
     try {
-      await api.patch(`/bookings/${bk.id}`, { status });
+      const r = await api.patch(`/bookings/${bk.id}`, { status });
+      setBookings((arr) => arr.map((b) => (b.id === bk.id ? r.data : b)));
       toast.success(status === "completed" ? "Booking marked as completed" : "Booking cancelled");
-      setConfirm(null);
-      setOpenBooking(null);
-      load();
-    } catch (e) { toast.error("Failed to update booking"); }
+    } catch (e) {
+      setBookings(snapshot);
+      toast.error("Couldn't update the booking — reverting. Please try again.");
+    } finally {
+      pendingOps.current = Math.max(0, pendingOps.current - 1);
+    }
   };
 
   const currentBranch = branches.find((b) => b.id === (openBooking?.branch_id || effectiveBranchId));
@@ -167,9 +222,10 @@ export default function BookingsPage({ branches, branchId, settings, initialBook
                 <div className="space-y-0.5">
                   {list.slice(0, 3).map((b) => (
                     <div key={b.id}
-                      onClick={(e) => { e.stopPropagation(); setOpenBooking(b); }}
+                      onClick={(e) => { e.stopPropagation(); if (!b._optimistic) setOpenBooking(b); }}
                       data-testid={`event-${b.id}`}
-                      className={`event-pill ${b.venue_type}`}>
+                      title={b._optimistic ? "Saving…" : ""}
+                      className={`event-pill ${b.venue_type} ${b._optimistic ? "opacity-60" : ""}`}>
                       {b.event_time} {b.customer_name}
                     </div>
                   ))}

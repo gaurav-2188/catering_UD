@@ -919,6 +919,161 @@ class TestIter5Indexes:
         assert "branch_id" in defs, f"users.branch_id index missing; defs={defs}"
 
 
+# ---------- Iteration 6: conditional total_amount recompute on PATCH ----------
+class TestIter6ConditionalTotalRecompute:
+    """Iteration 6: PATCH /api/bookings/{id} must SKIP recomputing the cached
+    total_amount unless the update payload contains one of the price-affecting
+    keys: items, num_people, discount_amount, discount_percent,
+    transportation_cost, gst_percent. Status-only flips (Mark Completed /
+    Cancel) become a single-column UPDATE — total_amount stays EXACTLY equal.
+
+    Strategy: create a booking, capture the server-stored total_amount, then
+    PATCH with various payloads and assert total_amount is preserved exactly
+    when expected and changes only when a price key is sent.
+    """
+
+    @pytest.fixture
+    def fresh_booking(self, s, staff1, main_branch, created_bookings):
+        """Create one isolated booking per test on a unique far-future date.
+        Returns (booking_id, original_total, gst_percent)."""
+        def _make(day_offset, name, num_people=20, items=None):
+            d = (date.today() + timedelta(days=day_offset)).isoformat()
+            p = _booking_payload(main_branch["id"], "10:00", "11:00", name, date_=d)
+            p["num_people"] = num_people
+            p["items"] = items or [{"item_id": "x", "name": "Test", "price": 200, "quantity": 1}]
+            r = s.post(f"{API}/bookings", json=p, headers=hdr(staff1))
+            assert r.status_code == 200, r.text
+            b = r.json()
+            created_bookings.append(b["id"])
+            return b["id"], b["total_amount"], float(b["gst_percent"])
+        return _make
+
+    def test_status_completed_preserves_total_exactly(self, s, staff1, fresh_booking):
+        bid, original_total, _ = fresh_booking(500, "iter6_compl")
+        assert original_total > 0
+        r = s.patch(f"{API}/bookings/{bid}", json={"status": "completed"}, headers=hdr(staff1))
+        assert r.status_code == 200, r.text
+        b = r.json()
+        assert b["status"] == "completed"
+        assert b["total_amount"] == original_total, (
+            f"status-only PATCH must not recompute total_amount; "
+            f"expected {original_total}, got {b['total_amount']}"
+        )
+
+    def test_status_cancelled_preserves_total_exactly(self, s, staff1, fresh_booking):
+        bid, original_total, _ = fresh_booking(501, "iter6_cancel")
+        r = s.patch(f"{API}/bookings/{bid}", json={"status": "cancelled"}, headers=hdr(staff1))
+        assert r.status_code == 200, r.text
+        b = r.json()
+        assert b["status"] == "cancelled"
+        assert b["total_amount"] == original_total
+
+    def test_patch_items_recomputes_total(self, s, staff1, fresh_booking):
+        # per_person_rate goes 200 -> 500 with num_people=20 -> subtotal jumps from 4000 to 10000
+        bid, original_total, gst = fresh_booking(502, "iter6_items")
+        new_items = [
+            {"item_id": "n1", "name": "A", "price": 300, "quantity": 1},
+            {"item_id": "n2", "name": "B", "price": 200, "quantity": 1},
+        ]
+        r = s.patch(f"{API}/bookings/{bid}", json={"items": new_items}, headers=hdr(staff1))
+        assert r.status_code == 200, r.text
+        expected = _expected_total(500, 20, gst)
+        new_total = r.json()["total_amount"]
+        assert abs(new_total - expected) < 0.01, f"items PATCH must recompute; expected {expected}, got {new_total}"
+        assert new_total != original_total
+
+    def test_patch_num_people_recomputes_total(self, s, staff1, fresh_booking):
+        bid, original_total, gst = fresh_booking(503, "iter6_np")
+        r = s.patch(f"{API}/bookings/{bid}", json={"num_people": 35}, headers=hdr(staff1))
+        assert r.status_code == 200, r.text
+        expected = _expected_total(200, 35, gst)
+        new_total = r.json()["total_amount"]
+        assert abs(new_total - expected) < 0.01
+        assert new_total != original_total
+
+    def test_patch_discount_amount_recomputes_total(self, s, staff1, fresh_booking):
+        bid, original_total, gst = fresh_booking(504, "iter6_da")
+        r = s.patch(f"{API}/bookings/{bid}", json={"discount_amount": 500}, headers=hdr(staff1))
+        assert r.status_code == 200, r.text
+        expected = _expected_total(200, 20, gst, discount_amount=500)
+        new_total = r.json()["total_amount"]
+        assert abs(new_total - expected) < 0.01
+        assert new_total != original_total
+
+    def test_patch_discount_percent_recomputes_total(self, s, staff1, fresh_booking):
+        bid, original_total, gst = fresh_booking(505, "iter6_dp")
+        r = s.patch(f"{API}/bookings/{bid}", json={"discount_percent": 10}, headers=hdr(staff1))
+        assert r.status_code == 200, r.text
+        expected = _expected_total(200, 20, gst, discount_percent=10)
+        new_total = r.json()["total_amount"]
+        assert abs(new_total - expected) < 0.01
+        assert new_total != original_total
+
+    def test_patch_transportation_cost_recomputes_total(self, s, staff1, fresh_booking):
+        bid, original_total, gst = fresh_booking(506, "iter6_tc")
+        r = s.patch(f"{API}/bookings/{bid}", json={"transportation_cost": 750}, headers=hdr(staff1))
+        assert r.status_code == 200, r.text
+        expected = _expected_total(200, 20, gst, transportation_cost=750)
+        new_total = r.json()["total_amount"]
+        assert abs(new_total - expected) < 0.01
+        # 750 added on top of original total (which was sum*np*(1+gst))
+        assert abs(new_total - (original_total + 750)) < 0.01
+
+    def test_patch_customer_name_preserves_total(self, s, staff1, fresh_booking):
+        bid, original_total, _ = fresh_booking(507, "iter6_name")
+        r = s.patch(f"{API}/bookings/{bid}", json={"customer_name": f"{TEST_TAG}_renamed"}, headers=hdr(staff1))
+        assert r.status_code == 200, r.text
+        b = r.json()
+        assert b["customer_name"] == f"{TEST_TAG}_renamed"
+        assert b["total_amount"] == original_total, (
+            f"non-price PATCH (customer_name) must NOT recompute total; "
+            f"expected {original_total}, got {b['total_amount']}"
+        )
+
+    def test_patch_notes_preserves_total(self, s, staff1, fresh_booking):
+        bid, original_total, _ = fresh_booking(508, "iter6_notes")
+        r = s.patch(f"{API}/bookings/{bid}", json={"notes": "iter6 note added"}, headers=hdr(staff1))
+        assert r.status_code == 200, r.text
+        b = r.json()
+        assert b["notes"] == "iter6 note added"
+        assert b["total_amount"] == original_total
+
+    def test_patch_phone_advance_paid_preserves_total(self, s, staff1, fresh_booking):
+        """advance_paid is NOT in the price-affecting keys -> total must stay."""
+        bid, original_total, _ = fresh_booking(509, "iter6_adv")
+        r = s.patch(f"{API}/bookings/{bid}",
+                    json={"phone": "8888888888", "advance_paid": 1000.0},
+                    headers=hdr(staff1))
+        assert r.status_code == 200, r.text
+        b = r.json()
+        assert b["phone"] == "8888888888"
+        assert float(b["advance_paid"]) == 1000.0
+        assert b["total_amount"] == original_total
+
+    def test_status_only_patch_persisted_via_get(self, s, staff1, fresh_booking):
+        """Confirm status flips to completed AND total stays in the persisted row."""
+        bid, original_total, _ = fresh_booking(510, "iter6_persist")
+        r = s.patch(f"{API}/bookings/{bid}", json={"status": "completed"}, headers=hdr(staff1))
+        assert r.status_code == 200
+        # GET the booking back via list and confirm row state
+        g = s.get(f"{API}/bookings", headers=hdr(staff1))
+        assert g.status_code == 200
+        row = next((b for b in g.json() if b["id"] == bid), None)
+        assert row is not None, "booking missing from list after status patch"
+        assert row["status"] == "completed"
+        assert row["total_amount"] == original_total
+
+    def test_admin_can_delete_booking_returns_200_and_row_gone(self, s, admin, staff1, fresh_booking):
+        """Iter6 frontend uses DELETE /api/bookings/{id} from a trash icon — admin path."""
+        bid, _, _ = fresh_booking(511, "iter6_del")
+        r = s.delete(f"{API}/bookings/{bid}", headers=hdr(admin))
+        assert r.status_code == 200, r.text
+        assert r.json().get("ok") is True
+        # subsequent PATCH should now 404 since the row is gone
+        r2 = s.patch(f"{API}/bookings/{bid}", json={"status": "completed"}, headers=hdr(admin))
+        assert r2.status_code == 404, f"expected 404 after delete, got {r2.status_code}: {r2.text}"
+
+
 # ---------- Teardown ----------
 @pytest.fixture(scope="session", autouse=True)
 def cleanup(s, admin, created_bookings, created_user_ids, created_branch_ids):

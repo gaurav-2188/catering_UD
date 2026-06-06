@@ -6,7 +6,9 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from "../components/ui/tabs"
 import { Button } from "../components/ui/button";
 import { Dialog, DialogContent } from "../components/ui/dialog";
 import BookingDetail from "./BookingDetail";
-import { CheckCircle2, XCircle, FileText, History } from "lucide-react";
+import ConfirmDialog from "../components/ConfirmDialog";
+import { CheckCircle2, XCircle, FileText, History, Trash2 } from "lucide-react";
+import { toast } from "sonner";
 
 const formatDate = (s) => {
   try { return new Date(s).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" }); }
@@ -19,18 +21,33 @@ export default function PreviousBookingsPage({ branches, branchId, settings, ini
   const [bookings, setBookings] = useState(initialBookings);
   const [tab, setTab] = useState("completed");
   const [open, setOpen] = useState(null);
-  const skipFirstFetch = React.useRef(initialBookings && initialBookings.length >= 0 && initialBookings === bookings);
+  const [pendingDelete, setPendingDelete] = useState(null); // booking pending hard-delete confirm
+  const pendingOps = React.useRef(0);
 
   const load = async () => {
+    if (pendingOps.current > 0) return;
     const params = user.role === "admin" && effective && effective !== "all" ? { branch_id: effective } : {};
     const r = await api.get("/bookings", { params });
     setBookings(r.data);
   };
-  useEffect(() => {
-    if (skipFirstFetch.current) { skipFirstFetch.current = false; return; }
-    load();
-    /* eslint-disable-next-line */
-  }, [effective]);
+
+  const hardDelete = async (bk) => {
+    const snapshot = bookings;
+    // Optimistically remove the row
+    setBookings((arr) => arr.filter((b) => b.id !== bk.id));
+    setPendingDelete(null);
+    pendingOps.current += 1;
+    try {
+      await api.delete(`/bookings/${bk.id}`);
+      toast.success("Booking permanently deleted");
+    } catch (e) {
+      setBookings(snapshot);
+      toast.error("Couldn't delete — reverted. Please try again.");
+    } finally {
+      pendingOps.current = Math.max(0, pendingOps.current - 1);
+    }
+  };
+  useEffect(() => { load(); /* eslint-disable-next-line */ }, [effective]);
 
   // Live updates — narrowly scoped to the active branch (or all branches for Admin)
   useEffect(() => {
@@ -86,10 +103,10 @@ export default function PreviousBookingsPage({ branches, branchId, settings, ini
         </TabsList>
 
         <TabsContent value="completed" className="mt-5">
-          <ArchiveTable rows={completed} onView={setOpen} emptyIcon={History} emptyMessage="No completed bookings yet." />
+          <ArchiveTable rows={completed} onView={setOpen} canDelete={user.role === "admin"} onDelete={setPendingDelete} emptyIcon={History} emptyMessage="No completed bookings yet." />
         </TabsContent>
         <TabsContent value="cancelled" className="mt-5">
-          <ArchiveTable rows={cancelled} onView={setOpen} emptyIcon={History} emptyMessage="No cancelled bookings yet." />
+          <ArchiveTable rows={cancelled} onView={setOpen} canDelete={user.role === "admin"} onDelete={setPendingDelete} emptyIcon={History} emptyMessage="No cancelled bookings yet." />
         </TabsContent>
       </Tabs>
 
@@ -98,11 +115,23 @@ export default function PreviousBookingsPage({ branches, branchId, settings, ini
           {open && <BookingDetail booking={open} branch={currentBranch} settings={settings} />}
         </DialogContent>
       </Dialog>
+
+      <ConfirmDialog
+        open={!!pendingDelete}
+        onOpenChange={(o) => !o && setPendingDelete(null)}
+        title="Delete this booking permanently?"
+        description={pendingDelete
+          ? `This will permanently remove ${pendingDelete.customer_name}'s booking from the database. This action cannot be undone.`
+          : ""}
+        confirmLabel="Yes, delete permanently"
+        tone="danger"
+        onConfirm={() => pendingDelete && hardDelete(pendingDelete)}
+      />
     </div>
   );
 }
 
-function ArchiveTable({ rows, onView, emptyIcon: Icon, emptyMessage }) {
+function ArchiveTable({ rows, onView, canDelete, onDelete, emptyIcon: Icon, emptyMessage }) {
   if (!rows.length) {
     return (
       <div className="bg-white rounded-2xl border border-[#E5E0D8] shadow-soft p-12 text-center">
@@ -141,16 +170,31 @@ function ArchiveTable({ rows, onView, emptyIcon: Icon, emptyMessage }) {
                     </span>
                   </td>
                   <td className="p-3 text-right font-semibold whitespace-nowrap">{currency(t.total)}</td>
-                  <td className="p-3 text-right">
-                    <Button
-                      data-testid={`view-summary-${b.id}`}
-                      variant="outline"
-                      size="sm"
-                      className="rounded-xl"
-                      onClick={() => onView(b)}
-                    >
-                      <FileText className="h-3.5 w-3.5 mr-1" /> View Summary
-                    </Button>
+                  <td className="p-3 text-right whitespace-nowrap">
+                    <div className="inline-flex items-center gap-1.5">
+                      <Button
+                        data-testid={`view-summary-${b.id}`}
+                        variant="outline"
+                        size="sm"
+                        className="rounded-xl"
+                        onClick={() => onView(b)}
+                      >
+                        <FileText className="h-3.5 w-3.5 mr-1" /> View Summary
+                      </Button>
+                      {canDelete && (
+                        <Button
+                          data-testid={`delete-perm-${b.id}`}
+                          variant="ghost"
+                          size="icon"
+                          aria-label="Delete permanently"
+                          title="Delete permanently"
+                          className="h-9 w-9 rounded-xl text-[#B33A3A] hover:bg-[#FDF3F3]"
+                          onClick={() => onDelete(b)}
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </Button>
+                      )}
+                    </div>
                   </td>
                 </tr>
               );
