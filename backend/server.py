@@ -96,6 +96,7 @@ def _booking_dict(b: m.Booking) -> dict:
         "notes": b.notes, "status": b.status, "created_by": b.created_by,
         "total_amount": float(b.total_amount or 0),
         "created_at": b.created_at.isoformat() if b.created_at else None,
+        "updated_at": b.updated_at.isoformat() if b.updated_at else None,
     }
 
 

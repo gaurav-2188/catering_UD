@@ -78,9 +78,10 @@ class Booking(Base):
     gst_percent = Column(Numeric, default=18, server_default="18")
     notes = Column(Text, default="", server_default="")
     status = Column(Text, default="booked", server_default="booked", index=True)
-    total_amount = Column(Numeric, default=0, server_default="0")  # cached for fast analytics
+    total_amount = Column(Numeric, default=0, server_default="0")
     created_by = Column(Text)
     created_at = Column(DateTime(timezone=True), default=utcnow)
+    updated_at = Column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
     __table_args__ = (
         Index("ix_bookings_branch_date", "branch_id", "event_date"),
     )
