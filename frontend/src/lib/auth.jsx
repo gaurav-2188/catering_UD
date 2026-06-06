@@ -16,10 +16,30 @@ export function AuthProvider({ children }) {
   const [loading, setLoading] = useState(true);
 
   const applyBootstrap = useCallback((data) => {
-    setUser(data.user);
+    // Normalizing role name mapping ("user" from DB corresponds to "staff" functionality)
+    const normalizedUser = data.user ? {
+      ...data.user,
+      role: data.user.role === "user" ? "staff" : data.user.role
+    } : null;
+
+    setUser(normalizedUser);
     setBranches(data.branches || []);
     setSettings(data.settings || null);
     setInitialBookings(data.bookings || []);
+
+    // Perform dynamic browser tab updates if matching setting entries exist
+    if (data.settings) {
+      document.title = "UD Catering";
+      if (data.settings.favicon_url) {
+        let link = document.querySelector("link[rel~='icon']");
+        if (!link) {
+          link = document.createElement("link");
+          link.rel = "icon";
+          document.head.appendChild(link);
+        }
+        link.href = data.settings.favicon_url;
+      }
+    }
   }, []);
 
   // On page refresh: validate token + load everything in a single request.
@@ -33,10 +53,12 @@ export function AuthProvider({ children }) {
   }, [applyBootstrap]);
 
   const login = async ({ username, password, role }) => {
-    const r = await api.post("/auth/login", { username, password, role });
+    // Map client "staff" role label back to backend "user" role matching table column constraints
+    const backendRole = role === "staff" ? "user" : role;
+    const r = await api.post("/auth/login", { username, password, role: backendRole });
     localStorage.setItem("ud_token", r.data.token);
-    // Immediately fetch bootstrap with the new token so the calendar is ready
-    // to render the moment the login flow returns.
+    
+    // Immediately fetch bootstrap with the new token so the layout maps correctly
     const b = await api.get("/bootstrap");
     applyBootstrap(b.data);
     return b.data.user;
@@ -47,8 +69,6 @@ export function AuthProvider({ children }) {
     setUser(null); setBranches([]); setSettings(null); setInitialBookings([]);
   };
 
-  // Lightweight refresh used by management screens (branches/settings) without
-  // disturbing the active calendar state.
   const refreshLayout = useCallback(async () => {
     const [br, st] = await Promise.all([api.get("/branches"), api.get("/settings")]);
     setBranches(br.data); setSettings(st.data);
@@ -59,7 +79,7 @@ export function AuthProvider({ children }) {
     <AuthCtx.Provider value={{
       user, loading, login, logout,
       branches, settings, setSettings,
-      initialBookings, refreshLayout,
+      initialBookings, setInitialBookings, refreshLayout,
     }}>
       {children}
     </AuthCtx.Provider>
