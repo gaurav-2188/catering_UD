@@ -15,7 +15,7 @@ from fastapi import FastAPI, APIRouter, HTTPException, Depends, Request
 from starlette.middleware.cors import CORSMiddleware
 from sqlalchemy import select, func, and_, delete as sql_delete
 from sqlalchemy.ext.asyncio import AsyncSession
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from database import AsyncSessionLocal, get_db
 import models as m
@@ -169,6 +169,12 @@ class BookingCreate(BaseModel):
     advance_paid: float = 0
     notes: str = ""
     ignore_conflict: bool = False
+
+    @model_validator(mode="after")
+    def _end_after_start(self):
+        if self.event_end_time <= self.event_time:
+            raise ValueError("event_end_time must be after event_time")
+        return self
 
 
 class BookingUpdate(BaseModel):
