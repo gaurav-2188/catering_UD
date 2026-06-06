@@ -4,14 +4,15 @@ import { useAuth } from "../lib/auth";
 import { supabase } from "../lib/supabase";
 import { Button } from "../components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "../components/ui/dialog";
-import { generateInvoicePDF } from "../lib/pdf";
-import { ChevronLeft, ChevronRight, Plus, FileText, CheckCircle2, XCircle, Pencil, AlertTriangle, MapPin, Users, Clock } from "lucide-react";
+import { ChevronLeft, ChevronRight, Plus, AlertTriangle } from "lucide-react";
 import BookingForm from "./BookingForm";
+import BookingDetail from "./BookingDetail";
+import ConfirmDialog from "../components/ConfirmDialog";
 import { toast } from "sonner";
 
 function monthMatrix(year, month) {
   const first = new Date(year, month, 1);
-  const startWeekday = first.getDay(); // 0=Sun
+  const startWeekday = first.getDay();
   const daysInMonth = new Date(year, month + 1, 0).getDate();
   const cells = [];
   for (let i = 0; i < startWeekday; i++) cells.push(null);
@@ -24,48 +25,47 @@ const fmtYMD = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2,
 export default function BookingsPage({ branches, branchId, settings }) {
   const { user } = useAuth();
   const [bookings, setBookings] = useState([]);
-  const [loading, setLoading] = useState(true);
   const [cursor, setCursor] = useState(() => { const n = new Date(); return new Date(n.getFullYear(), n.getMonth(), 1); });
   const [dayPanel, setDayPanel] = useState(null);
   const [openBooking, setOpenBooking] = useState(null);
   const [formOpen, setFormOpen] = useState(false);
   const [editing, setEditing] = useState(null);
-  const [conflict, setConflict] = useState(null); // {existing_id, pendingPayload}
+  const [conflict, setConflict] = useState(null);
+  const [confirm, setConfirm] = useState(null); // { kind: "complete"|"cancel", booking }
+
+  const effectiveBranchId = user.role === "admin" ? branchId : user.branch_id;
 
   const load = async () => {
-    setLoading(true);
-    try {
-      const params = user.role === "admin" && branchId && branchId !== "all" ? { branch_id: branchId } : {};
-      const r = await api.get("/bookings", { params });
-      let list = r.data;
-      if (user.role === "admin" && branchId === "all") {/* keep all */}
-      else if (branchId && branchId !== "all") list = list.filter((b) => b.branch_id === branchId);
-      setBookings(list);
-    } finally { setLoading(false); }
+    const params = user.role === "admin" && effectiveBranchId && effectiveBranchId !== "all" ? { branch_id: effectiveBranchId } : {};
+    const r = await api.get("/bookings", { params });
+    setBookings(r.data);
   };
 
-  useEffect(() => { load(); /* eslint-disable-next-line */ }, [branchId]);
+  useEffect(() => { load(); /* eslint-disable-next-line */ }, [effectiveBranchId]);
 
-  // Realtime — subscribe to bookings changes so multiple staff see the same calendar live.
+  // Live updates — subscribe to the non-PII bookings_signal table (no customer data leaks via realtime payload).
   useEffect(() => {
     if (!supabase) return;
     const filter = (user.role !== "admin" && user.branch_id)
       ? `branch_id=eq.${user.branch_id}`
       : undefined;
     const ch = supabase
-      .channel(`bookings:${user.id}`)
-      .on("postgres_changes", { event: "*", schema: "public", table: "bookings", ...(filter ? { filter } : {}) }, () => load())
+      .channel(`bookings_signal:${user.id}`)
+      .on("postgres_changes", { event: "INSERT", schema: "public", table: "bookings_signal", ...(filter ? { filter } : {}) }, () => load())
       .subscribe();
     return () => { supabase.removeChannel(ch); };
     /* eslint-disable-next-line */
   }, [user.id, user.role, user.branch_id]);
 
+  // Calendar shows ONLY active "booked" events; completed & cancelled live in Previous Bookings.
+  const calendarBookings = useMemo(() => bookings.filter((b) => b.status === "booked"), [bookings]);
+
   const bookingsByDate = useMemo(() => {
-    const m = {};
-    bookings.forEach((b) => { (m[b.event_date] = m[b.event_date] || []).push(b); });
-    Object.values(m).forEach((arr) => arr.sort((a, b) => a.event_time.localeCompare(b.event_time)));
-    return m;
-  }, [bookings]);
+    const map = {};
+    calendarBookings.forEach((b) => { (map[b.event_date] = map[b.event_date] || []).push(b); });
+    Object.values(map).forEach((arr) => arr.sort((a, b) => a.event_time.localeCompare(b.event_time)));
+    return map;
+  }, [calendarBookings]);
 
   const cells = monthMatrix(cursor.getFullYear(), cursor.getMonth());
 
@@ -91,16 +91,17 @@ export default function BookingsPage({ branches, branchId, settings }) {
     }
   };
 
-  const markStatus = async (bk, status) => {
+  const performStatusChange = async (bk, status) => {
     try {
       await api.patch(`/bookings/${bk.id}`, { status });
-      toast.success(`Marked as ${status}`);
+      toast.success(status === "completed" ? "Booking marked as completed" : "Booking cancelled");
+      setConfirm(null);
+      setOpenBooking(null);
       load();
-      if (openBooking?.id === bk.id) setOpenBooking({ ...bk, status });
-    } catch (e) { toast.error("Failed"); }
+    } catch (e) { toast.error("Failed to update booking"); }
   };
 
-  const currentBranch = branches.find((b) => b.id === (openBooking?.branch_id || branchId));
+  const currentBranch = branches.find((b) => b.id === (openBooking?.branch_id || effectiveBranchId));
 
   return (
     <div data-testid="bookings-page">
@@ -126,7 +127,7 @@ export default function BookingsPage({ branches, branchId, settings }) {
         </div>
       </div>
 
-      <div className="flex items-center gap-4 mb-3 text-xs text-[#5C6056]">
+      <div className="flex items-center gap-4 mb-3 text-sm text-[#5C6056]">
         <span className="flex items-center gap-1.5"><span className="inline-block h-2.5 w-2.5 rounded-full bg-[#4A5D23]" /> In-House</span>
         <span className="flex items-center gap-1.5"><span className="inline-block h-2.5 w-2.5 rounded-full bg-[#C84B31]" /> Outside Catering</span>
       </div>
@@ -161,11 +162,11 @@ export default function BookingsPage({ branches, branchId, settings }) {
                     <div key={b.id}
                       onClick={(e) => { e.stopPropagation(); setOpenBooking(b); }}
                       data-testid={`event-${b.id}`}
-                      className={`event-pill ${b.status === "cancelled" ? "cancelled" : b.status === "completed" ? "completed" : b.venue_type}`}>
+                      className={`event-pill ${b.venue_type}`}>
                       {b.event_time} {b.customer_name}
                     </div>
                   ))}
-                  {list.length > 3 && <div className="text-[10px] text-[#8A8D84]">+{list.length - 3} more</div>}
+                  {list.length > 3 && <div className="text-xs text-[#8A8D84]">+{list.length - 3} more</div>}
                 </div>
               </button>
             );
@@ -175,21 +176,21 @@ export default function BookingsPage({ branches, branchId, settings }) {
 
       {/* Day panel */}
       <Dialog open={!!dayPanel} onOpenChange={(o) => !o && setDayPanel(null)}>
-        <DialogContent className="max-w-lg rounded-2xl" data-testid="day-panel">
+        <DialogContent className="max-w-lg rounded-2xl max-h-[85vh] overflow-y-auto" data-testid="day-panel">
           <DialogHeader><DialogTitle className="font-display text-xl">
             Events on {dayPanel && new Date(dayPanel.date).toLocaleDateString("en-IN", { weekday: "long", day: "numeric", month: "long" })}
           </DialogTitle></DialogHeader>
-          <div className="space-y-2 max-h-[60vh] overflow-auto">
-            {dayPanel?.list.length === 0 && <p className="text-sm text-[#8A8D84]">No events scheduled.</p>}
+          <div className="space-y-2">
+            {dayPanel?.list.length === 0 && <p className="text-base text-[#8A8D84]">No events scheduled.</p>}
             {dayPanel?.list.map((b) => (
               <button key={b.id} onClick={() => { setOpenBooking(b); setDayPanel(null); }}
                 className="w-full text-left p-3 rounded-xl border border-[#E5E0D8] hover:bg-[#F2EFE9] flex items-center gap-3">
                 <span className={`inline-block h-2.5 w-2.5 rounded-full ${b.venue_type === "in_house" ? "bg-[#4A5D23]" : "bg-[#C84B31]"}`} />
                 <div className="flex-1 min-w-0">
-                  <div className="font-medium text-sm">{b.event_time} · {b.customer_name}</div>
-                  <div className="text-xs text-[#8A8D84] truncate">{b.venue_type === "in_house" ? "In-House" : "Outside"} · {b.num_people} guests</div>
+                  <div className="font-medium text-base">{b.event_time} · {b.customer_name}</div>
+                  <div className="text-sm text-[#8A8D84] truncate">{b.venue_type === "in_house" ? "In-House" : "Outside"} · {b.num_people} guests</div>
                 </div>
-                <span className="text-xs font-medium text-[#5C6056]">{currency(computeTotals(b).total)}</span>
+                <span className="text-sm font-medium text-[#5C6056]">{currency(computeTotals(b).total)}</span>
               </button>
             ))}
           </div>
@@ -198,14 +199,14 @@ export default function BookingsPage({ branches, branchId, settings }) {
 
       {/* Booking detail */}
       <Dialog open={!!openBooking} onOpenChange={(o) => !o && setOpenBooking(null)}>
-        <DialogContent className="max-w-2xl rounded-2xl" data-testid="booking-detail">
+        <DialogContent className="max-w-2xl rounded-2xl max-h-[90vh] overflow-y-auto" data-testid="booking-detail">
           {openBooking && <BookingDetail
             booking={openBooking}
             branch={currentBranch}
             settings={settings}
             onEdit={() => { setEditing(openBooking); setOpenBooking(null); setFormOpen(true); }}
-            onCancel={() => markStatus(openBooking, "cancelled")}
-            onComplete={() => markStatus(openBooking, "completed")}
+            onCancel={() => setConfirm({ kind: "cancel", booking: openBooking })}
+            onComplete={() => setConfirm({ kind: "complete", booking: openBooking })}
           />}
         </DialogContent>
       </Dialog>
@@ -218,7 +219,7 @@ export default function BookingsPage({ branches, branchId, settings }) {
           </DialogHeader>
           <BookingForm
             branches={branches}
-            currentBranchId={branchId !== "all" ? branchId : null}
+            currentBranchId={effectiveBranchId !== "all" ? effectiveBranchId : null}
             initial={editing}
             onCancel={() => { setFormOpen(false); setEditing(null); }}
             onSubmit={(payload) => submitBooking(payload, false)}
@@ -234,7 +235,7 @@ export default function BookingsPage({ branches, branchId, settings }) {
               <AlertTriangle className="h-7 w-7 text-[#B33A3A]" />
             </div>
             <h3 className="font-display text-2xl font-semibold text-[#B33A3A] mb-2">Warning: Time Conflict Detected!</h3>
-            <p className="text-sm text-[#5C6056] mb-6">
+            <p className="text-base text-[#5C6056] mb-6">
               Another booking already overlaps with this time window at this branch.
               Review both bookings before confirming.
             </p>
@@ -247,94 +248,19 @@ export default function BookingsPage({ branches, branchId, settings }) {
           </div>
         </DialogContent>
       </Dialog>
-    </div>
-  );
-}
 
-function BookingDetail({ booking, branch, settings, onEdit, onCancel, onComplete }) {
-  const t = computeTotals(booking);
-  return (
-    <div className="space-y-5">
-      <div>
-        <div className="flex items-center gap-2 mb-1">
-          <span className={`text-xs px-2 py-0.5 rounded-full text-white ${booking.venue_type === "in_house" ? "bg-[#4A5D23]" : "bg-[#C84B31]"}`}>
-            {booking.venue_type === "in_house" ? "In-House" : "Outside Catering"}
-          </span>
-          {booking.status !== "booked" && (
-            <span className="text-xs px-2 py-0.5 rounded-full bg-[#F2EFE9] text-[#5C6056] capitalize">{booking.status}</span>
-          )}
-        </div>
-        <h2 className="font-display text-2xl font-semibold">{booking.customer_name}</h2>
-        <p className="text-sm text-[#5C6056]">{booking.phone}</p>
-      </div>
-
-      <div className="grid grid-cols-2 gap-3">
-        <Info icon={Clock} label="Date & Time" value={`${booking.event_date} · ${booking.event_time}${booking.event_end_time ? `–${booking.event_end_time}` : ""}`} />
-        <Info icon={Users} label="Guests" value={booking.num_people} />
-        <Info icon={MapPin} label="Venue" value={booking.venue_address || (booking.venue_type === "in_house" ? "Party Hall" : "—")} />
-        <Info icon={FileText} label="GST" value={`${booking.gst_percent}%`} />
-      </div>
-
-      <div className="rounded-xl border border-[#E5E0D8] divide-y divide-[#E5E0D8]">
-        {booking.items.map((it) => (
-          <div key={it.item_id} className="flex justify-between p-3 text-sm">
-            <span>{it.name} <span className="text-[#8A8D84]">× {it.quantity}</span></span>
-            <span className="font-medium">{currency(it.price * it.quantity)}</span>
-          </div>
-        ))}
-      </div>
-
-      <div className="space-y-1.5 text-sm">
-        <Row label="Subtotal" value={currency(t.subtotal)} />
-        {t.discount > 0 && <Row label="Discount" value={`− ${currency(t.discount)}`} />}
-        <Row label={`GST (${t.gstPct}%)`} value={currency(t.gst)} />
-        {t.transport > 0 && <Row label="Transportation" value={currency(t.transport)} />}
-        <Row label="Total" value={currency(t.total)} bold />
-        <Row label="Advance Paid" value={`− ${currency(t.advance)}`} />
-        <Row label="Balance Due" value={currency(t.due)} accent />
-      </div>
-
-      {booking.notes && (
-        <div className="rounded-xl bg-[#F2EFE9] p-3 text-sm text-[#5C6056]">
-          <div className="eyebrow mb-1">Notes</div>
-          {booking.notes}
-        </div>
-      )}
-
-      <div className="flex flex-wrap gap-2 pt-2 border-t border-[#E5E0D8]">
-        <Button data-testid="invoice-btn" className="rounded-xl bg-[#4A5D23] hover:bg-[#3C4B1C] text-white"
-          onClick={() => generateInvoicePDF({ booking, branch, settings })}>
-          <FileText className="h-4 w-4 mr-1.5" /> Generate Invoice
-        </Button>
-        {booking.status === "booked" && (
-          <>
-            <Button data-testid="edit-booking-btn" variant="outline" className="rounded-xl" onClick={onEdit}>
-              <Pencil className="h-4 w-4 mr-1.5" /> Edit
-            </Button>
-            <Button data-testid="complete-booking-btn" variant="outline" className="rounded-xl border-[#4A5D23]/30 text-[#4A5D23] hover:bg-[#4A5D23]/5" onClick={onComplete}>
-              <CheckCircle2 className="h-4 w-4 mr-1.5" /> Mark Completed
-            </Button>
-            <Button data-testid="cancel-booking-btn" variant="outline" className="rounded-xl border-[#B33A3A]/30 text-[#B33A3A] hover:bg-[#FDF3F3]" onClick={onCancel}>
-              <XCircle className="h-4 w-4 mr-1.5" /> Cancel
-            </Button>
-          </>
-        )}
-      </div>
-    </div>
-  );
-}
-function Info({ icon: Icon, label, value }) {
-  return (
-    <div className="rounded-xl bg-[#F9F8F6] border border-[#E5E0D8] p-3">
-      <div className="flex items-center gap-1.5 mb-1 text-[#8A8D84]"><Icon className="h-3.5 w-3.5" /><span className="eyebrow">{label}</span></div>
-      <div className="font-medium text-sm">{value}</div>
-    </div>
-  );
-}
-function Row({ label, value, bold, accent }) {
-  return (
-    <div className={`flex justify-between ${bold ? "font-semibold pt-1.5 border-t border-[#E5E0D8]" : ""} ${accent ? "text-[#C84B31] font-semibold text-base" : ""}`}>
-      <span>{label}</span><span>{value}</span>
+      {/* Confirm Mark Completed / Cancel */}
+      <ConfirmDialog
+        open={!!confirm}
+        onOpenChange={(o) => !o && setConfirm(null)}
+        title={confirm?.kind === "complete" ? "Mark booking as completed?" : "Cancel this booking?"}
+        description={confirm?.kind === "complete"
+          ? "Once marked completed, this booking will be moved to Previous Bookings → Completed and removed from the calendar."
+          : "Cancelled bookings move to Previous Bookings → Cancelled. They will no longer block the time slot for new bookings."}
+        confirmLabel={confirm?.kind === "complete" ? "Yes, mark completed" : "Yes, cancel booking"}
+        tone={confirm?.kind === "complete" ? "primary" : "danger"}
+        onConfirm={() => confirm && performStatusChange(confirm.booking, confirm.kind === "complete" ? "completed" : "cancelled")}
+      />
     </div>
   );
 }

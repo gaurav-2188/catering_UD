@@ -8,6 +8,7 @@ import uuid
 import logging
 from datetime import datetime, timezone, timedelta
 from typing import List, Optional, Literal
+import re
 
 import bcrypt
 import jwt
@@ -15,7 +16,7 @@ from fastapi import FastAPI, APIRouter, HTTPException, Depends, Request
 from starlette.middleware.cors import CORSMiddleware
 from sqlalchemy import select, func, and_, delete as sql_delete
 from sqlalchemy.ext.asyncio import AsyncSession
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, model_validator, field_validator
 
 from database import AsyncSessionLocal, get_db
 import models as m
@@ -93,6 +94,7 @@ def _booking_dict(b: m.Booking) -> dict:
         "transportation_cost": float(b.transportation_cost or 0),
         "advance_paid": float(b.advance_paid or 0), "gst_percent": float(b.gst_percent or 18),
         "notes": b.notes, "status": b.status, "created_by": b.created_by,
+        "total_amount": float(b.total_amount or 0),
         "created_at": b.created_at.isoformat() if b.created_at else None,
     }
 
@@ -151,7 +153,23 @@ class BookingItem(BaseModel):
     item_id: str
     name: str
     price: float
-    quantity: int
+    quantity: int = 1
+
+
+_HHMM_RE = re.compile(r"^([01]\d|2[0-3]):([0-5]\d)$")
+_YMD_RE = re.compile(r"^\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$")
+
+
+def _validate_hhmm(v: str) -> str:
+    if not _HHMM_RE.match(v or ""):
+        raise ValueError("must be HH:MM (24h)")
+    return v
+
+
+def _validate_ymd(v: str) -> str:
+    if not _YMD_RE.match(v or ""):
+        raise ValueError("must be YYYY-MM-DD")
+    return v
 
 
 class BookingCreate(BaseModel):
@@ -172,6 +190,9 @@ class BookingCreate(BaseModel):
     notes: str = ""
     ignore_conflict: bool = False
 
+    _v_date = field_validator("event_date")(lambda cls, v: _validate_ymd(v))
+    _v_time = field_validator("event_time", "event_end_time")(lambda cls, v: _validate_hhmm(v))
+
 
 class BookingUpdate(BaseModel):
     customer_name: Optional[str] = None
@@ -190,6 +211,16 @@ class BookingUpdate(BaseModel):
     notes: Optional[str] = None
     status: Optional[Literal["booked", "completed", "cancelled"]] = None
     ignore_conflict: bool = False
+
+    @field_validator("event_date")
+    @classmethod
+    def _vd(cls, v):
+        return _validate_ymd(v) if v is not None else v
+
+    @field_validator("event_time", "event_end_time")
+    @classmethod
+    def _vt(cls, v):
+        return _validate_hhmm(v) if v is not None else v
 
 
 class SettingsBody(BaseModel):
@@ -378,6 +409,16 @@ async def delete_menu_item(item_id: str, user: dict = Depends(require_role("admi
 
 
 # ---------- Bookings ----------
+def _compute_total_amount(items, num_people: int, discount_amount: float, discount_percent: float, transportation_cost: float, gst_percent: float) -> float:
+    """Per-person pricing: subtotal = sum(item.price) × num_people."""
+    per_person_rate = sum(float(it["price"] if isinstance(it, dict) else it.price) for it in items)
+    subtotal = per_person_rate * (num_people or 0)
+    discount = (discount_amount or 0) + subtotal * (discount_percent or 0) / 100
+    taxable = max(0.0, subtotal - discount)
+    gst = taxable * (gst_percent or 0) / 100
+    return taxable + gst + (transportation_cost or 0)
+
+
 def _compute_range(event_date: str, start_str: str, end_str: str):
     """Return (start_at, end_at) datetimes. If end <= start the event is treated
     as overnight (end is next day)."""
@@ -435,6 +476,10 @@ async def create_booking(body: BookingCreate, user: dict = Depends(get_current_u
         discount_amount=body.discount_amount, discount_percent=body.discount_percent,
         transportation_cost=body.transportation_cost, advance_paid=body.advance_paid,
         notes=body.notes, gst_percent=gst, created_by=user["id"], status="booked",
+        total_amount=_compute_total_amount(
+            body.items, body.num_people, body.discount_amount, body.discount_percent,
+            body.transportation_cost, gst,
+        ),
     )
     db.add(bk); await db.commit(); await db.refresh(bk)
     return _booking_dict(bk)
@@ -465,6 +510,11 @@ async def update_booking(booking_id: str, body: BookingUpdate, user: dict = Depe
         update["items"] = [i if isinstance(i, dict) else i.model_dump() for i in update["items"]]
     for k, v in update.items():
         setattr(bk, k, v)
+    # Recompute cached total_amount whenever a price-affecting field changes
+    bk.total_amount = _compute_total_amount(
+        bk.items, bk.num_people, float(bk.discount_amount or 0), float(bk.discount_percent or 0),
+        float(bk.transportation_cost or 0), float(bk.gst_percent or 18),
+    )
     await db.commit(); await db.refresh(bk)
     return _booking_dict(bk)
 
@@ -510,60 +560,61 @@ async def update_settings(body: SettingsBody, user: dict = Depends(require_role(
 async def analytics_summary(branch_id: Optional[str] = None, user: dict = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
     if user["role"] != "admin":
         branch_id = user.get("branch_id")
-    q = select(m.Booking).where(m.Booking.status != "cancelled")
-    if branch_id:
-        q = q.where(m.Booking.branch_id == branch_id)
-    res = await db.execute(q)
-    docs = [_booking_dict(b) for b in res.scalars().all()]
-
-    def total_for(bk: dict) -> float:
-        subtotal = sum(it["price"] * it["quantity"] for it in bk["items"])
-        disc = bk.get("discount_amount", 0) + subtotal * (bk.get("discount_percent", 0) / 100)
-        taxable = max(0, subtotal - disc)
-        gst = taxable * (bk.get("gst_percent", 18) / 100)
-        return taxable + gst + bk.get("transportation_cost", 0)
 
     today = datetime.now(timezone.utc).date()
     week_start = today - timedelta(days=today.weekday())
     month_start = today.replace(day=1)
     year_start = today.replace(month=1, day=1)
 
-    daily = {"bookings": 0, "sales": 0.0}
-    weekly = {"bookings": 0, "sales": 0.0}
-    monthly = {"bookings": 0, "sales": 0.0}
-    yearly = {"bookings": 0, "sales": 0.0}
-    daily_series = {}
-    monthly_series = {}
+    base_filter = "WHERE b.status != 'cancelled'"
+    params = {}
+    if branch_id:
+        base_filter += " AND b.branch_id = :branch_id"
+        params["branch_id"] = branch_id
 
-    for bk in docs:
-        try:
-            d = datetime.strptime(bk["event_date"], "%Y-%m-%d").date()
-        except Exception:
-            continue
-        amt = total_for(bk)
-        if d == today:
-            daily["bookings"] += 1; daily["sales"] += amt
-        if d >= week_start:
-            weekly["bookings"] += 1; weekly["sales"] += amt
-        if d >= month_start:
-            monthly["bookings"] += 1; monthly["sales"] += amt
-        if d >= year_start:
-            yearly["bookings"] += 1; yearly["sales"] += amt
-        if 0 <= (today - d).days < 30:
-            k = d.isoformat()
-            daily_series.setdefault(k, {"date": k, "bookings": 0, "sales": 0.0})
-            daily_series[k]["bookings"] += 1
-            daily_series[k]["sales"] += amt
-        if d.year == today.year or (today.year - d.year == 1 and d.month >= today.month):
-            mk = d.strftime("%Y-%m")
-            monthly_series.setdefault(mk, {"month": mk, "bookings": 0, "sales": 0.0})
-            monthly_series[mk]["bookings"] += 1
-            monthly_series[mk]["sales"] += amt
+    from sqlalchemy import text
+
+    async def bucket(date_predicate: str, p: dict):
+        sql = f"""
+            SELECT COUNT(*) AS bookings, COALESCE(SUM(b.total_amount), 0) AS sales
+            FROM bookings b
+            {base_filter} AND {date_predicate}
+        """
+        r = await db.execute(text(sql), {**params, **p})
+        row = r.first()
+        return {"bookings": int(row.bookings or 0), "sales": float(row.sales or 0)}
+
+    daily = await bucket("b.event_date = :d", {"d": today.isoformat()})
+    weekly = await bucket("b.event_date >= :d", {"d": week_start.isoformat()})
+    monthly = await bucket("b.event_date >= :d", {"d": month_start.isoformat()})
+    yearly = await bucket("b.event_date >= :d", {"d": year_start.isoformat()})
+
+    # Daily series — last 30 days
+    sql_daily = f"""
+        SELECT b.event_date AS date, COUNT(*) AS bookings, COALESCE(SUM(b.total_amount), 0) AS sales
+        FROM bookings b
+        {base_filter} AND b.event_date >= :since
+        GROUP BY b.event_date
+        ORDER BY b.event_date
+    """
+    r = await db.execute(text(sql_daily), {**params, "since": (today - timedelta(days=29)).isoformat()})
+    daily_series = [{"date": row.date, "bookings": int(row.bookings), "sales": float(row.sales)} for row in r]
+
+    # Monthly series — last 12 months
+    sql_monthly = f"""
+        SELECT substring(b.event_date, 1, 7) AS month,
+               COUNT(*) AS bookings, COALESCE(SUM(b.total_amount), 0) AS sales
+        FROM bookings b
+        {base_filter} AND b.event_date >= :since
+        GROUP BY 1
+        ORDER BY 1
+    """
+    r = await db.execute(text(sql_monthly), {**params, "since": (today - timedelta(days=365)).isoformat()})
+    monthly_series = [{"month": row.month, "bookings": int(row.bookings), "sales": float(row.sales)} for row in r]
 
     return {
         "daily": daily, "weekly": weekly, "monthly": monthly, "yearly": yearly,
-        "daily_series": sorted(daily_series.values(), key=lambda x: x["date"]),
-        "monthly_series": sorted(monthly_series.values(), key=lambda x: x["month"]),
+        "daily_series": daily_series, "monthly_series": monthly_series,
     }
 
 

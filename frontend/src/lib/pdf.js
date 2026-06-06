@@ -1,5 +1,5 @@
 import jsPDF from "jspdf";
-import "jspdf-autotable";
+import autoTable from "jspdf-autotable";
 import { computeTotals } from "./api";
 
 export function generateInvoicePDF({ booking, branch, settings, fileName }) {
@@ -8,7 +8,7 @@ export function generateInvoicePDF({ booking, branch, settings, fileName }) {
 
   // Header
   if (settings?.company_logo && settings.company_logo.startsWith("data:image")) {
-    try { doc.addImage(settings.company_logo, "PNG", 40, 30, 50, 50); } catch (e) {}
+    try { doc.addImage(settings.company_logo, "PNG", 40, 30, 50, 50); } catch (e) { /* ignore broken logo */ }
   }
   doc.setFont("helvetica", "bold");
   doc.setFontSize(22);
@@ -29,7 +29,7 @@ export function generateInvoicePDF({ booking, branch, settings, fileName }) {
   doc.text(`Issued: ${new Date().toLocaleDateString("en-IN")}`, 555 - 40, 86, { align: "right" });
 
   // Customer & event
-  let y = 130;
+  const y = 130;
   doc.setDrawColor(229, 224, 216);
   doc.line(40, y - 20, 555, y - 20);
 
@@ -59,12 +59,12 @@ export function generateInvoicePDF({ booking, branch, settings, fileName }) {
     doc.text(wrapped, 320, y + 48);
   }
 
-  // Items table
-  doc.autoTable({
+  // Items table: per-person pricing
+  autoTable(doc, {
     startY: y + 90,
-    head: [["#", "Item", "Qty", "Price (Rs)", "Amount (Rs)"]],
+    head: [["#", "Item", "Per person (Rs)", `Guests`, "Amount (Rs)"]],
     body: booking.items.map((it, i) => [
-      i + 1, it.name, it.quantity, it.price.toFixed(2), (it.price * it.quantity).toFixed(2),
+      i + 1, it.name, Number(it.price).toFixed(2), booking.num_people, (Number(it.price) * booking.num_people).toFixed(2),
     ]),
     theme: "striped",
     headStyles: { fillColor: [74, 93, 35], textColor: 255, fontStyle: "bold" },
@@ -75,7 +75,7 @@ export function generateInvoicePDF({ booking, branch, settings, fileName }) {
   let endY = doc.lastAutoTable.finalY + 20;
 
   const rows = [
-    ["Subtotal", t.subtotal],
+    [`Subtotal (Rs ${t.perPersonRate.toFixed(0)}/guest × ${t.headcount})`, t.subtotal],
     ...(t.discount > 0 ? [["Discount", -t.discount]] : []),
     [`GST (${t.gstPct}%)`, t.gst],
     ...(t.transport > 0 ? [["Transportation", t.transport]] : []),
@@ -88,10 +88,8 @@ export function generateInvoicePDF({ booking, branch, settings, fileName }) {
   rows.forEach(([label, val], i) => {
     const isFinal = label === "Balance Due";
     doc.setFont("helvetica", isFinal ? "bold" : "normal");
-    doc.setTextColor(isFinal ? 200 : 60, isFinal ? 75 : 60, isFinal ? 49 : 60);
-    if (isFinal) { doc.setTextColor(200, 75, 49); }
-    else { doc.setTextColor(60, 60, 60); }
-    doc.text(label, 360, endY + i * 18);
+    if (isFinal) { doc.setTextColor(200, 75, 49); } else { doc.setTextColor(60, 60, 60); }
+    doc.text(String(label), 320, endY + i * 18);
     doc.text(`Rs ${Number(val).toFixed(2)}`, 555 - 40, endY + i * 18, { align: "right" });
   });
 

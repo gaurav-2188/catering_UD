@@ -19,7 +19,10 @@ export const currency = (n) =>
   );
 
 export function computeTotals(booking, gstPercentOverride) {
-  const subtotal = (booking.items || []).reduce((s, it) => s + (it.price || 0) * (it.quantity || 0), 0);
+  // Each menu item is a PER-PERSON rate. Subtotal = sum of selected item prices × num_people.
+  const headcount = Number(booking.num_people || 0);
+  const perPersonRate = (booking.items || []).reduce((s, it) => s + (Number(it.price) || 0), 0);
+  const subtotal = perPersonRate * headcount;
   const discAmt = Number(booking.discount_amount || 0);
   const discPct = Number(booking.discount_percent || 0);
   const discount = discAmt + (subtotal * discPct) / 100;
@@ -30,5 +33,5 @@ export function computeTotals(booking, gstPercentOverride) {
   const total = taxable + gst + transport;
   const advance = Number(booking.advance_paid || 0);
   const due = Math.max(0, total - advance);
-  return { subtotal, discount, taxable, gst, transport, total, advance, due, gstPct };
+  return { subtotal, perPersonRate, headcount, discount, taxable, gst, transport, total, advance, due, gstPct };
 }

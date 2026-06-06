@@ -78,6 +78,7 @@ class Booking(Base):
     gst_percent = Column(Numeric, default=18, server_default="18")
     notes = Column(Text, default="", server_default="")
     status = Column(Text, default="booked", server_default="booked", index=True)
+    total_amount = Column(Numeric, default=0, server_default="0")  # cached for fast analytics
     created_by = Column(Text)
     created_at = Column(DateTime(timezone=True), default=utcnow)
     __table_args__ = (

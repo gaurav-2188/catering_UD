@@ -3,22 +3,27 @@ import { useAuth } from "../lib/auth";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../components/ui/select";
 import { Button } from "../components/ui/button";
 import { Link, useLocation } from "react-router-dom";
-import { ChefHat, LayoutDashboard, Settings, Users, Building2, ListTree, LogOut, BarChart3 } from "lucide-react";
+import { ChefHat, LayoutDashboard, Settings, Users, Building2, ListTree, LogOut, BarChart3, History } from "lucide-react";
 
 export default function AppLayout({ children, branches, branchId, setBranchId, settings }) {
   const { user, logout } = useAuth();
   const loc = useLocation();
 
   const navByRole = {
-    user: [{ to: "/", label: "Bookings", icon: LayoutDashboard }],
+    user: [
+      { to: "/", label: "Bookings", icon: LayoutDashboard },
+      { to: "/previous", label: "Previous Bookings", icon: History },
+    ],
     manager: [
       { to: "/", label: "Bookings", icon: LayoutDashboard },
+      { to: "/previous", label: "Previous Bookings", icon: History },
       { to: "/menu", label: "Menu", icon: ListTree },
       { to: "/staff", label: "Staff", icon: Users },
       { to: "/branch-settings", label: "Branch Settings", icon: Settings },
     ],
     admin: [
       { to: "/", label: "Bookings", icon: LayoutDashboard },
+      { to: "/previous", label: "Previous Bookings", icon: History },
       { to: "/analytics", label: "Analytics", icon: BarChart3 },
       { to: "/menu", label: "Menu", icon: ListTree },
       { to: "/branches", label: "Branches", icon: Building2 },
@@ -47,18 +52,29 @@ export default function AppLayout({ children, branches, branchId, setBranchId, s
             </div>
           </div>
           <div className="flex items-center gap-2 lg:gap-3">
-            <div className="hidden sm:block eyebrow text-[#8A8D84]">Branch</div>
-            <Select value={branchId || "all"} onValueChange={setBranchId}>
-              <SelectTrigger data-testid="branch-selector" className="h-10 min-w-[220px] rounded-xl border-[#E5E0D8]">
-                <SelectValue placeholder="Select branch" />
-              </SelectTrigger>
-              <SelectContent>
-                {user.role === "admin" && <SelectItem value="all" data-testid="branch-option-all">All branches</SelectItem>}
-                {branches.map((b) => (
-                  <SelectItem key={b.id} value={b.id} data-testid={`branch-option-${b.id}`}>{b.name}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            {user.role === "admin" ? (
+              <>
+                <div className="hidden sm:block eyebrow text-[#8A8D84]">Branch</div>
+                <Select value={branchId || "all"} onValueChange={setBranchId}>
+                  <SelectTrigger data-testid="branch-selector" className="h-10 min-w-[220px] rounded-xl border-[#E5E0D8]">
+                    <SelectValue placeholder="Select branch" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all" data-testid="branch-option-all">All branches</SelectItem>
+                    {branches.map((b) => (
+                      <SelectItem key={b.id} value={b.id} data-testid={`branch-option-${b.id}`}>{b.name}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </>
+            ) : (
+              <div className="hidden sm:flex items-center gap-2 px-3 h-10 rounded-xl bg-[#F2EFE9] border border-[#E5E0D8]" data-testid="branch-readonly">
+                <span className="eyebrow text-[#8A8D84]">Branch</span>
+                <span className="text-base font-medium text-[#1A1C18] truncate max-w-[200px]">
+                  {(branches.find((b) => b.id === user.branch_id) || {}).name || "—"}
+                </span>
+              </div>
+            )}
             <Button
               data-testid="logout-btn"
               variant="ghost"

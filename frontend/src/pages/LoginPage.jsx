@@ -8,9 +8,9 @@ import { toast } from "sonner";
 import { ChefHat, User, Shield, Briefcase } from "lucide-react";
 
 const ROLES = [
-  { key: "user", label: "Staff", icon: User, hint: "staff1 / staff123" },
-  { key: "manager", label: "Manager", icon: Briefcase, hint: "manager1 / manager123" },
-  { key: "admin", label: "Admin", icon: Shield, hint: "admin@udcatering.com / admin123" },
+  { key: "user", label: "Staff", icon: User },
+  { key: "manager", label: "Manager", icon: Briefcase },
+  { key: "admin", label: "Admin", icon: Shield },
 ];
 
 export default function LoginPage() {
@@ -101,9 +101,6 @@ export default function LoginPage() {
                     >
                       {busy ? "Signing in..." : `Sign in as ${r.label}`}
                     </Button>
-                    <p className="text-xs text-[#8A8D84] text-center pt-1">
-                      Demo: <span className="font-medium text-[#5C6056]">{r.hint}</span>
-                    </p>
                   </form>
                 </TabsContent>
               ))}

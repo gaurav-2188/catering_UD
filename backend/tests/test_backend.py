@@ -471,6 +471,308 @@ class TestAnalyticsAndSettings:
         assert r2.json()["company_logo"] == logo
 
 
+# ---------- Iteration 4: regex validators, per-person pricing, total_amount cache, realtime/policies ----------
+def _expected_total(per_person_items_sum, num_people, gst_percent, discount_amount=0, discount_percent=0, transportation_cost=0):
+    subtotal = per_person_items_sum * num_people
+    discount = discount_amount + subtotal * discount_percent / 100
+    taxable = max(0.0, subtotal - discount)
+    gst = taxable * gst_percent / 100
+    return taxable + gst + transportation_cost
+
+
+class TestIter4Validators:
+    """Iteration 4: BookingCreate/Update now have HH:MM and YYYY-MM-DD regex validators -> 422 (not 500)."""
+
+    def test_create_invalid_event_time_returns_422(self, s, staff1, main_branch):
+        p = _booking_payload(main_branch["id"], "25:00", "20:00", "badtime")
+        r = s.post(f"{API}/bookings", json=p, headers=hdr(staff1))
+        assert r.status_code == 422, f"expected 422, got {r.status_code}: {r.text}"
+        body = r.text.lower()
+        assert "event_time" in body or "hh:mm" in body or "pattern" in body or "string_pattern_mismatch" in body
+
+    def test_create_invalid_event_date_returns_422(self, s, staff1, main_branch):
+        p = _booking_payload(main_branch["id"], "10:00", "11:00", "baddate", date_="08-2027-01")
+        r = s.post(f"{API}/bookings", json=p, headers=hdr(staff1))
+        assert r.status_code == 422, f"expected 422, got {r.status_code}: {r.text}"
+        body = r.text.lower()
+        assert "event_date" in body or "yyyy" in body or "pattern" in body or "string_pattern_mismatch" in body
+
+    def test_patch_invalid_event_time_returns_422(self, s, staff1, main_branch, created_bookings):
+        d = (date.today() + timedelta(days=445)).isoformat()
+        p = _booking_payload(main_branch["id"], "08:00", "09:00", "patch_v_base", date_=d)
+        rb = s.post(f"{API}/bookings", json=p, headers=hdr(staff1))
+        assert rb.status_code == 200, rb.text
+        bid = rb.json()["id"]
+        created_bookings.append(bid)
+        r = s.patch(f"{API}/bookings/{bid}", json={"event_time": "9:5"}, headers=hdr(staff1))
+        assert r.status_code == 422, f"expected 422, got {r.status_code}: {r.text}"
+
+    def test_patch_invalid_event_date_returns_422(self, s, staff1, main_branch, created_bookings):
+        d = (date.today() + timedelta(days=446)).isoformat()
+        p = _booking_payload(main_branch["id"], "08:00", "09:00", "patch_v_d", date_=d)
+        rb = s.post(f"{API}/bookings", json=p, headers=hdr(staff1))
+        assert rb.status_code == 200, rb.text
+        created_bookings.append(rb.json()["id"])
+        r = s.patch(f"{API}/bookings/{rb.json()['id']}", json={"event_date": "08-2027-01"}, headers=hdr(staff1))
+        assert r.status_code == 422, r.text
+
+
+class TestIter4PerPersonPricing:
+    """Iteration 4: total_amount is cached on booking row; subtotal = sum(item.price) * num_people."""
+
+    def test_total_amount_per_person_with_gst(self, s, staff1, main_branch, created_bookings):
+        d = (date.today() + timedelta(days=450)).isoformat()
+        payload = _booking_payload(main_branch["id"], "10:00", "11:00", "pp1", date_=d)
+        payload["num_people"] = 50
+        payload["items"] = [
+            {"item_id": "x1", "name": "Veg", "price": 280, "quantity": 1},
+            {"item_id": "x2", "name": "NonVeg", "price": 380, "quantity": 1},
+        ]
+        payload["discount_amount"] = 0
+        payload["discount_percent"] = 0
+        payload["transportation_cost"] = 0
+        r = s.post(f"{API}/bookings", json=payload, headers=hdr(staff1))
+        assert r.status_code == 200, r.text
+        b = r.json()
+        created_bookings.append(b["id"])
+        gst = float(b["gst_percent"])  # seeded 18
+        expected = _expected_total(280 + 380, 50, gst)  # (280+380)*50*1.18 = 38,940
+        assert abs(b["total_amount"] - expected) < 0.01, f"expected {expected}, got {b['total_amount']}"
+        # quantity should be effectively ignored — same total if quantity were doubled
+        # (verified indirectly: expected uses per_person_rate=price only)
+
+    def test_total_amount_quantity_is_ignored(self, s, staff1, main_branch, created_bookings):
+        """Send quantity=10 -> total_amount should still be sum(price) * num_people * (1+gst)."""
+        d = (date.today() + timedelta(days=451)).isoformat()
+        payload = _booking_payload(main_branch["id"], "10:00", "11:00", "ppQ", date_=d)
+        payload["num_people"] = 20
+        payload["items"] = [{"item_id": "x", "name": "Test", "price": 100, "quantity": 10}]
+        r = s.post(f"{API}/bookings", json=payload, headers=hdr(staff1))
+        assert r.status_code == 200, r.text
+        b = r.json()
+        created_bookings.append(b["id"])
+        gst = float(b["gst_percent"])
+        expected = _expected_total(100, 20, gst)  # 100*20*1.18 = 2360
+        assert abs(b["total_amount"] - expected) < 0.01, f"qty ignored expected {expected}, got {b['total_amount']}"
+
+    def test_patch_num_people_recomputes_total(self, s, staff1, main_branch, created_bookings):
+        d = (date.today() + timedelta(days=452)).isoformat()
+        payload = _booking_payload(main_branch["id"], "10:00", "11:00", "ppPATCH", date_=d)
+        payload["num_people"] = 10
+        payload["items"] = [{"item_id": "x", "name": "Test", "price": 200, "quantity": 1}]
+        r = s.post(f"{API}/bookings", json=payload, headers=hdr(staff1))
+        assert r.status_code == 200, r.text
+        b = r.json()
+        bid = b["id"]
+        created_bookings.append(bid)
+        gst = float(b["gst_percent"])
+        assert abs(b["total_amount"] - _expected_total(200, 10, gst)) < 0.01
+        # PATCH num_people 10 -> 25
+        r2 = s.patch(f"{API}/bookings/{bid}", json={"num_people": 25}, headers=hdr(staff1))
+        assert r2.status_code == 200, r2.text
+        b2 = r2.json()
+        assert abs(b2["total_amount"] - _expected_total(200, 25, gst)) < 0.01, f"got {b2['total_amount']}"
+
+    def test_patch_items_and_discount_recomputes_total(self, s, staff1, main_branch, created_bookings):
+        d = (date.today() + timedelta(days=453)).isoformat()
+        payload = _booking_payload(main_branch["id"], "10:00", "11:00", "ppItems", date_=d)
+        payload["num_people"] = 30
+        payload["items"] = [{"item_id": "x", "name": "Test", "price": 150, "quantity": 1}]
+        r = s.post(f"{API}/bookings", json=payload, headers=hdr(staff1))
+        bid = r.json()["id"]
+        created_bookings.append(bid)
+        gst = float(r.json()["gst_percent"])
+        # New items 100+250 per_person, discount_amount=500
+        new_items = [
+            {"item_id": "n1", "name": "A", "price": 100, "quantity": 1},
+            {"item_id": "n2", "name": "B", "price": 250, "quantity": 1},
+        ]
+        r2 = s.patch(f"{API}/bookings/{bid}",
+                     json={"items": new_items, "discount_amount": 500}, headers=hdr(staff1))
+        assert r2.status_code == 200, r2.text
+        expected = _expected_total(350, 30, gst, discount_amount=500)
+        assert abs(r2.json()["total_amount"] - expected) < 0.01, f"got {r2.json()['total_amount']}"
+
+
+class TestIter4AnalyticsConsistency:
+    """Iteration 4: /analytics/summary uses SUM(total_amount) via pure SQL. Shape unchanged."""
+
+    def test_analytics_summary_uses_stored_totals(self, s, admin):
+        r = s.get(f"{API}/analytics/summary", headers=hdr(admin))
+        assert r.status_code == 200
+        data = r.json()
+        # Same shape contract
+        for k in ("daily", "weekly", "monthly", "yearly", "daily_series", "monthly_series"):
+            assert k in data
+        # Sales fields are numeric and non-negative
+        for bucket in ("daily", "weekly", "monthly", "yearly"):
+            assert isinstance(data[bucket]["bookings"], int)
+            assert isinstance(data[bucket]["sales"], (int, float))
+            assert data[bucket]["sales"] >= 0
+            assert data[bucket]["bookings"] >= 0
+        # Yearly sales >= monthly >= weekly >= daily (monotone since totals are non-negative)
+        ds = data["daily"]["sales"]; ws = data["weekly"]["sales"]
+        ms = data["monthly"]["sales"]; ys = data["yearly"]["sales"]
+        assert ws >= ds, f"weekly {ws} should be >= daily {ds}"
+        assert ms >= ws, f"monthly {ms} should be >= weekly {ws}"
+        assert ys >= ms, f"yearly {ys} should be >= monthly {ms}"
+
+    def test_analytics_sales_matches_sum_of_listed_total_amount(self, s, admin):
+        """The 'yearly' sales bucket should equal SUM(total_amount) of all bookings whose
+        event_date falls in the current year. We compute that from GET /api/bookings."""
+        from datetime import datetime as _dt
+        year = _dt.utcnow().year
+        rb = s.get(f"{API}/bookings", headers=hdr(admin))
+        assert rb.status_code == 200
+        bookings = rb.json()
+        # NOTE: server.py 'yearly' bucket actually uses predicate `event_date >= year_start`
+        # so it catches ALL bookings from Jan 1 of current year onwards INCLUDING future-dated ones.
+        # (Naming is misleading — see code review note.)
+        year_start = f"{year}-01-01"
+        expected_year_sum = sum(
+            float(b.get("total_amount") or 0)
+            for b in bookings
+            if (b.get("event_date") or "") >= year_start
+            and b.get("status") != "cancelled"
+        )
+        r = s.get(f"{API}/analytics/summary", headers=hdr(admin))
+        assert r.status_code == 200
+        ys = float(r.json()["yearly"]["sales"])
+        # Allow small float tolerance (DB float vs Python float rounding)
+        assert abs(ys - expected_year_sum) < 1.0, f"yearly sales {ys} vs expected {expected_year_sum}"
+
+
+class TestIter4ListBookingsCompleted:
+    """Completed bookings still appear in GET /api/bookings (frontend filters client-side)."""
+
+    def test_completed_booking_listed_by_get_bookings(self, s, staff1, main_branch, created_bookings):
+        d = (date.today() + timedelta(days=455)).isoformat()
+        p = _booking_payload(main_branch["id"], "09:00", "10:00", "complListed", date_=d)
+        rb = s.post(f"{API}/bookings", json=p, headers=hdr(staff1))
+        assert rb.status_code == 200, rb.text
+        bid = rb.json()["id"]
+        created_bookings.append(bid)
+        r1 = s.patch(f"{API}/bookings/{bid}", json={"status": "completed"}, headers=hdr(staff1))
+        assert r1.status_code == 200
+        assert r1.json()["status"] == "completed"
+        r2 = s.get(f"{API}/bookings", headers=hdr(staff1))
+        assert r2.status_code == 200
+        ids_and_status = [(b["id"], b["status"]) for b in r2.json()]
+        assert (bid, "completed") in ids_and_status, "completed booking must still be returned by GET /api/bookings"
+
+
+# ---------- Iteration 4: DB-level realtime publication / policies / trigger ----------
+def _db_dsn():
+    """Read DATABASE_URL from /app/backend/.env (we don't want to clobber env)."""
+    path = "/app/backend/.env"
+    try:
+        with open(path) as f:
+            for line in f:
+                line = line.strip()
+                if line.startswith("DATABASE_URL"):
+                    _, _, val = line.partition("=")
+                    return val.strip().strip('"').strip("'")
+    except Exception:
+        return None
+    return None
+
+
+@pytest.fixture(scope="session")
+def pg_conn():
+    import psycopg2
+    dsn = _db_dsn()
+    if not dsn:
+        pytest.skip("DATABASE_URL not found in /app/backend/.env")
+    try:
+        conn = psycopg2.connect(dsn, connect_timeout=15)
+        conn.autocommit = True
+    except Exception as e:
+        pytest.skip(f"cannot reach Postgres: {e}")
+        return
+    yield conn
+    conn.close()
+
+
+class TestIter4Realtime:
+    def test_publication_includes_bookings_signal_not_bookings(self, pg_conn):
+        cur = pg_conn.cursor()
+        cur.execute(
+            "SELECT tablename FROM pg_publication_tables "
+            "WHERE pubname = 'supabase_realtime' AND schemaname = 'public'"
+        )
+        tables = {row[0] for row in cur.fetchall()}
+        cur.close()
+        assert "bookings_signal" in tables, f"bookings_signal missing from publication; have {tables}"
+        assert "bookings" not in tables, f"bookings table must NOT be in realtime publication; have {tables}"
+
+    def test_anon_policy_only_on_bookings_signal(self, pg_conn):
+        cur = pg_conn.cursor()
+        cur.execute(
+            """
+            SELECT tablename, policyname, roles
+            FROM pg_policies
+            WHERE schemaname = 'public'
+              AND tablename LIKE 'booking%'
+            """
+        )
+        rows = cur.fetchall()
+        cur.close()
+        # Filter to policies that include 'anon' in roles
+        anon_policies = []
+        for tablename, policyname, roles in rows:
+            roles_list = list(roles) if roles is not None else []
+            if any("anon" in str(r) for r in roles_list):
+                anon_policies.append((tablename, policyname))
+        # Should have at least one and only the bookings_signal_anon_read on bookings_signal
+        assert anon_policies, f"no anon policies found among booking* tables; rows={rows}"
+        for tablename, policyname in anon_policies:
+            assert tablename == "bookings_signal", (
+                f"anon policy on '{tablename}' (policy '{policyname}') — should only be on bookings_signal. all: {anon_policies}"
+            )
+        names = {p for _, p in anon_policies}
+        assert "bookings_signal_anon_read" in names, f"bookings_signal_anon_read policy missing; have {names}"
+
+    def test_trigger_emits_signal_on_booking_insert(self, s, staff1, main_branch, created_bookings, pg_conn):
+        d = (date.today() + timedelta(days=460)).isoformat()
+        p = _booking_payload(main_branch["id"], "08:00", "09:00", "sig_insert", date_=d)
+        rb = s.post(f"{API}/bookings", json=p, headers=hdr(staff1))
+        assert rb.status_code == 200, rb.text
+        bid = rb.json()["id"]
+        created_bookings.append(bid)
+        cur = pg_conn.cursor()
+        cur.execute(
+            "SELECT action FROM bookings_signal WHERE booking_id = %s ORDER BY created_at",
+            (bid,),
+        )
+        actions = [row[0] for row in cur.fetchall()]
+        cur.close()
+        assert actions, f"no bookings_signal row found for booking {bid}"
+        assert actions[0].upper() in ("INSERT", "I", "CREATE"), f"first signal action was {actions[0]}"
+
+    def test_trigger_emits_signal_on_update_and_delete(self, s, admin, staff1, main_branch, pg_conn):
+        d = (date.today() + timedelta(days=461)).isoformat()
+        p = _booking_payload(main_branch["id"], "08:00", "09:00", "sig_ud", date_=d)
+        rb = s.post(f"{API}/bookings", json=p, headers=hdr(staff1))
+        assert rb.status_code == 200, rb.text
+        bid = rb.json()["id"]
+        # UPDATE
+        r2 = s.patch(f"{API}/bookings/{bid}", json={"notes": "trigger-test"}, headers=hdr(staff1))
+        assert r2.status_code == 200
+        # DELETE (admin)
+        r3 = s.delete(f"{API}/bookings/{bid}", headers=hdr(admin))
+        assert r3.status_code == 200
+        cur = pg_conn.cursor()
+        cur.execute(
+            "SELECT action FROM bookings_signal WHERE booking_id = %s ORDER BY created_at",
+            (bid,),
+        )
+        actions = [row[0].upper() for row in cur.fetchall()]
+        cur.close()
+        assert any(a in ("INSERT", "I", "CREATE") for a in actions), f"insert signal missing; got {actions}"
+        assert any(a in ("UPDATE", "U") for a in actions), f"update signal missing; got {actions}"
+        assert any(a in ("DELETE", "D") for a in actions), f"delete signal missing; got {actions}"
+
+
 # ---------- Teardown ----------
 @pytest.fixture(scope="session", autouse=True)
 def cleanup(s, admin, created_bookings, created_user_ids, created_branch_ids):

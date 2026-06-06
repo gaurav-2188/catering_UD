@@ -7,6 +7,7 @@ import { AuthProvider, useAuth } from "./lib/auth";
 import LoginPage from "./pages/LoginPage";
 import AppLayout from "./pages/AppLayout";
 import BookingsPage from "./pages/BookingsPage";
+import PreviousBookingsPage from "./pages/PreviousBookingsPage";
 import MenuPage from "./pages/MenuPage";
 import StaffPage from "./pages/StaffPage";
 import BranchesPage from "./pages/BranchesPage";
@@ -43,6 +44,7 @@ function AppShell() {
     <AppLayout {...layoutProps}>
       <Routes>
         <Route path="/" element={<BookingsPage branches={branches} branchId={branchId} settings={settings} />} />
+        <Route path="/previous" element={<PreviousBookingsPage branches={branches} branchId={branchId} settings={settings} />} />
         {user.role !== "user" && <Route path="/menu" element={<MenuPage branches={branches} branchId={branchId} setBranchId={setBranchId} />} />}
         {user.role !== "user" && <Route path="/staff" element={<StaffPage branches={branches} />} />}
         {user.role === "manager" && <Route path="/branch-settings" element={<BranchSettingsPage branches={branches} reload={loadAll} />} />}
