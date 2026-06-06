@@ -24,6 +24,16 @@ export default function BookingForm({ branches, currentBranchId, initial, onCanc
   const [event_end_time, setEndTime] = useState(initial?.event_end_time || "22:00");
   const [discount_amount, setDiscAmt] = useState(initial?.discount_amount || 0);
   const [discount_percent, setDiscPct] = useState(initial?.discount_percent || 0);
+  // Unified discount input — choose mode "percent" or "amount". Default = percent.
+  const initialMode = (initial?.discount_amount && !initial?.discount_percent) ? "amount" : "percent";
+  const [discountMode, setDiscountMode] = useState(initialMode);
+  const [discountValue, setDiscountValue] = useState(
+    initial ? (initialMode === "amount" ? (initial.discount_amount || 0) : (initial.discount_percent || 0)) : 0
+  );
+  useEffect(() => {
+    if (discountMode === "percent") { setDiscPct(Number(discountValue) || 0); setDiscAmt(0); }
+    else { setDiscAmt(Number(discountValue) || 0); setDiscPct(0); }
+  }, [discountMode, discountValue]);
   const [transportation_cost, setTransport] = useState(initial?.transportation_cost || 0);
   const [advance_paid, setAdvance] = useState(initial?.advance_paid || 0);
   const [notes, setNotes] = useState(initial?.notes || "");
@@ -123,7 +133,7 @@ export default function BookingForm({ branches, currentBranchId, initial, onCanc
               if (!cm.length) return null;
               return (
                 <div key={c.id} className="mb-3">
-                  <div className="overline text-[#8A8D84] mb-1.5">{c.name}</div>
+                  <div className="eyebrow text-[#8A8D84] mb-1.5">{c.name}</div>
                   <div className="space-y-1">
                     {cm.map((mi) => (
                       <button type="button" key={mi.id} onClick={() => addItem(mi)}
@@ -165,9 +175,32 @@ export default function BookingForm({ branches, currentBranchId, initial, onCanc
 
       {/* Financials */}
       <Section title="Financials & notes">
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
-          <Field label="Discount (₹)"><Input data-testid="form-disc-amt" type="number" min={0} value={discount_amount} onChange={(e) => setDiscAmt(e.target.value)} className="h-12 rounded-xl" /></Field>
-          <Field label="Discount (%)"><Input data-testid="form-disc-pct" type="number" min={0} max={100} value={discount_percent} onChange={(e) => setDiscPct(e.target.value)} className="h-12 rounded-xl" /></Field>
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+          <div>
+            <Label>Discount</Label>
+            <div className="mt-1.5 flex h-12 rounded-xl border border-[#E5E0D8] bg-white overflow-hidden focus-within:ring-2 focus-within:ring-[#4A5D23]/30">
+              <Input
+                data-testid="form-discount-value"
+                type="number"
+                min={0}
+                value={discountValue}
+                onChange={(e) => setDiscountValue(e.target.value)}
+                className="h-full border-0 rounded-none shadow-none focus-visible:ring-0 flex-1"
+              />
+              <Select value={discountMode} onValueChange={setDiscountMode}>
+                <SelectTrigger
+                  data-testid="form-discount-mode"
+                  className="h-full w-24 border-0 border-l border-[#E5E0D8] rounded-none bg-[#F9F8F6] text-base font-medium focus:ring-0"
+                >
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="percent" data-testid="discount-mode-percent">%</SelectItem>
+                  <SelectItem value="amount" data-testid="discount-mode-amount">₹</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
           <Field label="Transportation (₹)"><Input data-testid="form-transport" type="number" min={0} value={transportation_cost} onChange={(e) => setTransport(e.target.value)} className="h-12 rounded-xl" /></Field>
           <Field label="Advance paid (₹)"><Input data-testid="form-advance" type="number" min={0} value={advance_paid} onChange={(e) => setAdvance(e.target.value)} className="h-12 rounded-xl" /></Field>
         </div>
@@ -196,7 +229,7 @@ export default function BookingForm({ branches, currentBranchId, initial, onCanc
 
 const Section = ({ title, children }) => (
   <div>
-    <div className="overline text-[#8A8D84] mb-3">{title}</div>
+    <div className="eyebrow text-[#8A8D84] mb-3">{title}</div>
     {children}
   </div>
 );
@@ -205,7 +238,7 @@ const Field = ({ label, children }) => (
 );
 const Stat = ({ label, value, accent }) => (
   <div>
-    <div className="overline text-[#8A8D84]">{label}</div>
+    <div className="eyebrow text-[#8A8D84]">{label}</div>
     <div className={`font-display text-base font-semibold ${accent ? "text-[#C84B31]" : "text-[#1A1C18]"}`}>{value}</div>
   </div>
 );

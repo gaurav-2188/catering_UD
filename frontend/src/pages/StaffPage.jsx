@@ -42,7 +42,7 @@ export default function StaffPage({ branches }) {
     <div data-testid="staff-page">
       <div className="flex items-center justify-between mb-6 flex-wrap gap-3">
         <div>
-          <div className="overline text-[#8A8D84]">{user.role === "admin" ? "User management" : "Staff management"}</div>
+          <div className="eyebrow text-[#8A8D84]">{user.role === "admin" ? "User management" : "Staff management"}</div>
           <h1 className="font-display text-3xl font-semibold">{user.role === "admin" ? "All accounts" : "Staff accounts"}</h1>
         </div>
         <Button data-testid="new-user-btn" onClick={() => setOpen(true)} className="h-10 rounded-xl bg-[#4A5D23] hover:bg-[#3C4B1C] text-white">
@@ -51,14 +51,14 @@ export default function StaffPage({ branches }) {
       </div>
 
       <div className="bg-white rounded-2xl border border-[#E5E0D8] shadow-soft overflow-hidden">
-        <table className="w-full text-sm">
+        <table className="w-full text-base">
           <thead className="bg-[#F9F8F6] text-[#5C6056]">
             <tr>
-              <th className="text-left p-3 overline">Username</th>
-              <th className="text-left p-3 overline">Role</th>
-              <th className="text-left p-3 overline">Branch</th>
-              <th className="text-left p-3 overline">Created</th>
-              <th className="text-right p-3 overline">Actions</th>
+              <th className="text-left p-3 eyebrow">Username</th>
+              <th className="text-left p-3 eyebrow">Role</th>
+              <th className="text-left p-3 eyebrow">Branch</th>
+              <th className="text-left p-3 eyebrow">Created</th>
+              <th className="text-right p-3 eyebrow">Actions</th>
             </tr>
           </thead>
           <tbody>

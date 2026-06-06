@@ -12,7 +12,7 @@ from datetime import date, timedelta
 import pytest
 import requests
 
-BASE_URL = os.environ.get("REACT_APP_BACKEND_URL", "https://catering-management-1.preview.emergentagent.com").rstrip("/")
+BASE_URL = (os.environ.get("REACT_APP_BACKEND_URL") or "https://catering-management-1.preview.emergentagent.com").rstrip("/")
 API = f"{BASE_URL}/api"
 
 # Future date well outside business calendar so test bookings won't collide with real data
@@ -262,6 +262,125 @@ class TestBookingsAndConflict:
         p = _booking_payload(downtown_branch["id"], "08:00", "09:00", "cross")
         r = s.post(f"{API}/bookings", json=p, headers=hdr(staff1))
         assert r.status_code == 403
+
+
+# ---------- Iteration 3: overnight bookings + start_at/end_at ----------
+class TestOvernightBookings:
+    """Iteration 3: end_time <= start_time means OVERNIGHT (end is next day).
+    Conflict detection uses absolute start_at/end_at timestamps."""
+
+    def test_overnight_booking_accepted_and_end_at_next_day(self, s, staff1, main_branch, created_bookings):
+        d = (date.today() + timedelta(days=430)).isoformat()
+        payload = _booking_payload(main_branch["id"], "22:00", "02:00", "overnight", date_=d)
+        r = s.post(f"{API}/bookings", json=payload, headers=hdr(staff1))
+        assert r.status_code == 200, r.text
+        b = r.json()
+        created_bookings.append(b["id"])
+        # Response must include start_at and end_at as ISO strings
+        assert "start_at" in b and isinstance(b["start_at"], str)
+        assert "end_at" in b and isinstance(b["end_at"], str)
+        assert b["start_at"].startswith(d + "T22:00")
+        # end_at must be on the NEXT day at 02:00
+        next_day = (date.today() + timedelta(days=431)).isoformat()
+        assert b["end_at"].startswith(next_day + "T02:00"), f"expected end_at on {next_day}, got {b['end_at']}"
+        assert b["event_time"] == "22:00"
+        assert b["event_end_time"] == "02:00"
+
+    def test_response_includes_start_at_end_at_for_normal_booking(self, s, staff1, main_branch, created_bookings):
+        d = (date.today() + timedelta(days=431)).isoformat()
+        payload = _booking_payload(main_branch["id"], "10:00", "12:00", "normal_iso", date_=d)
+        r = s.post(f"{API}/bookings", json=payload, headers=hdr(staff1))
+        assert r.status_code == 200, r.text
+        b = r.json()
+        created_bookings.append(b["id"])
+        assert b["start_at"].startswith(d + "T10:00")
+        assert b["end_at"].startswith(d + "T12:00")  # same day
+
+    def test_same_date_overlap_with_overnight(self, s, staff1, main_branch, created_bookings):
+        # existing 22:00-02:00 (overnight); new 21:00-23:00 same date -> overlap on day X
+        d = (date.today() + timedelta(days=432)).isoformat()
+        base = _booking_payload(main_branch["id"], "22:00", "02:00", "ovn_base", date_=d)
+        rb = s.post(f"{API}/bookings", json=base, headers=hdr(staff1))
+        assert rb.status_code == 200, rb.text
+        created_bookings.append(rb.json()["id"])
+        new = _booking_payload(main_branch["id"], "21:00", "23:00", "ovn_overlap", date_=d)
+        r = s.post(f"{API}/bookings", json=new, headers=hdr(staff1))
+        assert r.status_code == 409, r.text
+        assert r.json()["detail"]["code"] == "TIME_CONFLICT"
+        assert "existing_id" in r.json()["detail"]
+
+    def test_cross_date_overlap_with_overnight(self, s, staff1, main_branch, created_bookings):
+        # existing 22:00-02:00 on day X (overnight); new 01:00-03:00 on day X+1 -> overlap
+        d1 = (date.today() + timedelta(days=433)).isoformat()
+        d2 = (date.today() + timedelta(days=434)).isoformat()
+        base = _booking_payload(main_branch["id"], "22:00", "02:00", "xdate_base", date_=d1)
+        rb = s.post(f"{API}/bookings", json=base, headers=hdr(staff1))
+        assert rb.status_code == 200, rb.text
+        created_bookings.append(rb.json()["id"])
+        new = _booking_payload(main_branch["id"], "01:00", "03:00", "xdate_overlap", date_=d2)
+        r = s.post(f"{API}/bookings", json=new, headers=hdr(staff1))
+        assert r.status_code == 409, r.text
+        assert r.json()["detail"]["code"] == "TIME_CONFLICT"
+
+    def test_cross_date_non_overlap_after_overnight(self, s, staff1, main_branch, created_bookings):
+        # existing 22:00-02:00 on day X (overnight); new 03:00-05:00 on day X+1 -> no overlap
+        d1 = (date.today() + timedelta(days=435)).isoformat()
+        d2 = (date.today() + timedelta(days=436)).isoformat()
+        base = _booking_payload(main_branch["id"], "22:00", "02:00", "noxov_base", date_=d1)
+        rb = s.post(f"{API}/bookings", json=base, headers=hdr(staff1))
+        assert rb.status_code == 200, rb.text
+        created_bookings.append(rb.json()["id"])
+        new = _booking_payload(main_branch["id"], "03:00", "05:00", "noxov_ok", date_=d2)
+        r = s.post(f"{API}/bookings", json=new, headers=hdr(staff1))
+        assert r.status_code == 200, r.text
+        created_bookings.append(r.json()["id"])
+
+    def test_patch_recomputes_start_at_end_at(self, s, staff1, main_branch, created_bookings):
+        # Create normal booking, PATCH to overnight, verify end_at moves to next day
+        d = (date.today() + timedelta(days=437)).isoformat()
+        p = _booking_payload(main_branch["id"], "09:00", "10:00", "patch_recompute", date_=d)
+        rb = s.post(f"{API}/bookings", json=p, headers=hdr(staff1))
+        assert rb.status_code == 200
+        bid = rb.json()["id"]
+        created_bookings.append(bid)
+        r = s.patch(f"{API}/bookings/{bid}",
+                    json={"event_time": "23:00", "event_end_time": "01:00"}, headers=hdr(staff1))
+        assert r.status_code == 200, r.text
+        b = r.json()
+        next_day = (date.today() + timedelta(days=438)).isoformat()
+        assert b["start_at"].startswith(d + "T23:00")
+        assert b["end_at"].startswith(next_day + "T01:00"), f"expected end_at on {next_day}, got {b['end_at']}"
+
+    def test_patch_conflict_check_uses_new_range(self, s, staff1, main_branch, created_bookings):
+        # Create two non-conflicting bookings, then PATCH one into the other's range -> 409
+        d = (date.today() + timedelta(days=439)).isoformat()
+        a = _booking_payload(main_branch["id"], "10:00", "11:00", "pc_a", date_=d)
+        ra = s.post(f"{API}/bookings", json=a, headers=hdr(staff1))
+        assert ra.status_code == 200, ra.text
+        created_bookings.append(ra.json()["id"])
+        b_payload = _booking_payload(main_branch["id"], "15:00", "16:00", "pc_b", date_=d)
+        rb = s.post(f"{API}/bookings", json=b_payload, headers=hdr(staff1))
+        assert rb.status_code == 200
+        bid = rb.json()["id"]
+        created_bookings.append(bid)
+        # PATCH b to overlap a (10:30-10:45)
+        r = s.patch(f"{API}/bookings/{bid}",
+                    json={"event_time": "10:30", "event_end_time": "10:45"}, headers=hdr(staff1))
+        assert r.status_code == 409
+        assert r.json()["detail"]["code"] == "TIME_CONFLICT"
+
+    def test_discount_percent_only_accepted(self, s, staff1, main_branch, created_bookings):
+        # Iteration 3 frontend writes one of discount_amount/discount_percent. Contract unchanged.
+        d = (date.today() + timedelta(days=440)).isoformat()
+        payload = _booking_payload(main_branch["id"], "12:00", "13:00", "discpct", date_=d)
+        payload["discount_percent"] = 10
+        payload["discount_amount"] = 0
+        r = s.post(f"{API}/bookings", json=payload, headers=hdr(staff1))
+        assert r.status_code == 200, r.text
+        b = r.json()
+        created_bookings.append(b["id"])
+        assert float(b["discount_percent"]) == 10.0
+        assert float(b["discount_amount"]) == 0.0
 
 
 # ---------- Users RBAC ----------

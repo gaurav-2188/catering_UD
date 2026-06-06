@@ -24,7 +24,7 @@ export default function AnalyticsPage({ branches, branchId, setBranchId }) {
     <div data-testid="analytics-page">
       <div className="flex items-center justify-between mb-6 gap-3 flex-wrap">
         <div>
-          <div className="overline text-[#8A8D84]">Analytics</div>
+          <div className="eyebrow text-[#8A8D84]">Analytics</div>
           <h1 className="font-display text-3xl font-semibold">Sales & bookings</h1>
         </div>
         <Select value={branchId} onValueChange={setBranchId}>
@@ -40,7 +40,7 @@ export default function AnalyticsPage({ branches, branchId, setBranchId }) {
         {stats.map((s) => (
           <div key={s.k} className="bg-white rounded-2xl border border-[#E5E0D8] shadow-soft p-5" data-testid={`stat-${s.k}`}>
             <div className={`h-1.5 w-10 rounded-full ${s.tone} mb-3`} />
-            <div className="overline text-[#8A8D84]">{s.label}</div>
+            <div className="eyebrow text-[#8A8D84]">{s.label}</div>
             <div className="font-display text-2xl font-semibold mt-1">{currency(data[s.k].sales)}</div>
             <div className="text-xs text-[#5C6056] mt-1">{data[s.k].bookings} bookings</div>
           </div>
@@ -49,7 +49,7 @@ export default function AnalyticsPage({ branches, branchId, setBranchId }) {
 
       <div className="grid lg:grid-cols-2 gap-5">
         <div className="bg-white rounded-2xl border border-[#E5E0D8] shadow-soft p-5" data-testid="chart-daily">
-          <div className="overline text-[#8A8D84] mb-1">Daily sales · last 30 days</div>
+          <div className="eyebrow text-[#8A8D84] mb-1">Daily sales · last 30 days</div>
           <h3 className="font-display text-lg font-semibold mb-3">Revenue trend</h3>
           <div className="h-64">
             <ResponsiveContainer>
@@ -65,7 +65,7 @@ export default function AnalyticsPage({ branches, branchId, setBranchId }) {
         </div>
 
         <div className="bg-white rounded-2xl border border-[#E5E0D8] shadow-soft p-5" data-testid="chart-monthly">
-          <div className="overline text-[#8A8D84] mb-1">Monthly bookings</div>
+          <div className="eyebrow text-[#8A8D84] mb-1">Monthly bookings</div>
           <h3 className="font-display text-lg font-semibold mb-3">Booking volume</h3>
           <div className="h-64">
             <ResponsiveContainer>

@@ -1,0 +1,31 @@
+{
+  "summary": "Iteration 3 backend regression. Added 8 new tests covering overnight bookings + start_at/end_at semantics: (1) overnight booking accepted (22:00-02:00) — end_at correctly stamped to next day; (2) response body includes start_at and end_at as ISO strings for both normal and overnight bookings; (3) same-date overlap with an overnight booking returns 409 TIME_CONFLICT; (4) cross-date overlap (existing 22:00-02:00 on day X, new 01:00-03:00 on day X+1) returns 409; (5) cross-date non-overlap (new 03:00-05:00 on day X+1) returns 200; (6) PATCH recomputes start_at/end_at when event_time/event_end_time change (verified next-day rollover); (7) PATCH still triggers TIME_CONFLICT on new range; (8) discount_percent=10 with discount_amount=0 still accepted with contract unchanged. All previous iter-2 assertions retained and re-verified: login (admin/manager/staff), branches/categories/menu seeded, ignore_conflict bypass, cancelled bookings do not block new overlapping ones, branch RBAC, /api/weather still 404, /api/analytics/summary shape. Result: 37/37 pass against live REACT_APP_BACKEND_URL.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_backend.py",
+    "/app/test_reports/pytest/pytest_results.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "_compute_range stamps tzinfo=timezone.utc on naive HH:MM strings — fine because models.Booking.start_at/end_at are TIMESTAMPTZ and the same convention is used in both create and update, but the system effectively treats the user's local clock time as UTC. If the business operates in IST and analytics is later filtered by absolute UTC ranges this will shift events by 5h30. Consider documenting that bookings are stored as UTC-of-local-wall-clock, or convert via a configurable TZ.",
+    "_compute_range treats end == start as overnight (end_at += 1 day) because of `if end_at <= start_at`. A 22:00-22:00 booking will become a 24-hour event silently. Likely fine in practice but worth a small validator to reject equal times or document it.",
+    "BookingCreate.event_time/event_end_time are free-form strings; malformed HH:MM (e.g. '25:00' or '7:5') will raise ValueError at strptime and bubble up as a 500. Recommend a regex validator or Pydantic Time field for early 422.",
+    "Conflict query reads only one row (.limit(1)) — fine for the blocking check, but the response only ever surfaces the FIRST conflict id. If the UI wants to show all conflicts (esp. for overnight events crossing two days) we'd need to return a list.",
+    "PATCH /api/bookings does not require ignore_conflict to be sent when status is changing only — currently safe because time_changed gate skips the conflict query, but verify any future field that affects start_at/end_at is added to the gate.",
+    "Realtime: anon-read SELECT policy on bookings exposes the entire bookings table (customer phone, addresses) to anyone with the anon Supabase key. The Supabase anon key is shipped to the browser. Confirm this is intentional; otherwise restrict by status or use authenticated channel.",
+    "Two distinct user identities (manager1+role=manager and staff1+role=user) can share the same username across roles (login uses username+role). Acceptable but easy to confuse operators — consider unique-username-globally with role inferred from user record.",
+    "Analytics total_for() recomputes totals client-side-ish per booking on every /analytics/summary call. Cheap today but at scale move to SQL aggregation."
+  ],
+  "updated_files": ["/app/backend/tests/test_backend.py"],
+  "success_rate": {"backend": "100% (37/37)", "frontend": "N/A (backend-only request)"},
+  "test_credentials": "admin@udcatering.com/admin123, manager1/manager123, manager2/manager123, staff1/staff123, staff2/staff123 — all verified working in this iteration",
+  "seed_data_creation": "Each iter-3 overnight test uses a unique far-future date (today+430..+440) and TEST_<uuid6> prefix on customer_name. Session-scoped cleanup deletes created bookings/users/branches after the run.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Regression suite at /app/backend/tests/test_backend.py now covers Iteration 3 contract: bookings store start_at/end_at TIMESTAMPTZ; end_time <= start_time is OVERNIGHT (end is next day); conflict query uses (start_at < new_end_at AND end_at > new_start_at). Run: pytest /app/backend/tests/test_backend.py -v --tb=short --junitxml=/app/test_reports/pytest/pytest_results.xml. REACT_APP_BACKEND_URL not set in the env env-block — test file falls back to https://catering-management-1.preview.emergentagent.com.",
+  "rca of the issue": "N/A — no failures observed in this iteration. Overnight booking semantics, start_at/end_at response shape, and cross-date conflict detection all behave per spec."
+}

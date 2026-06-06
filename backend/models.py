@@ -66,6 +66,10 @@ class Booking(Base):
     event_date = Column(Text, nullable=False, index=True)  # YYYY-MM-DD
     event_time = Column(Text, nullable=False)  # HH:MM
     event_end_time = Column(Text, nullable=False)
+    # Absolute timestamps used for conflict detection. Handles overnight events
+    # (where event_end_time <= event_time, end is +1 day).
+    start_at = Column(DateTime(timezone=True), nullable=True, index=True)
+    end_at = Column(DateTime(timezone=True), nullable=True, index=True)
     items = Column(JSONB, nullable=False, server_default="[]")
     discount_amount = Column(Numeric, default=0, server_default="0")
     discount_percent = Column(Numeric, default=0, server_default="0")

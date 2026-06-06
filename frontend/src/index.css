@@ -4,6 +4,10 @@
 
 @import url('https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700&family=IBM+Plex+Sans:wght@400;500;600&display=swap');
 
+html {
+  font-size: 17px; /* bump base from 16px → 17px for better readability on staff devices */
+}
+
 body {
   margin: 0;
   font-family: 'IBM Plex Sans', sans-serif;
@@ -17,11 +21,13 @@ h1, h2, h3, h4, h5, h6, .font-display {
   letter-spacing: -0.01em;
 }
 
-.overline {
-  font-size: 0.6875rem;
-  letter-spacing: 0.2em;
+.eyebrow {
+  font-size: 0.75rem;
+  letter-spacing: 0.18em;
   text-transform: uppercase;
-  font-weight: 500;
+  font-weight: 600;
+  color: #8A8D84;
+  text-decoration: none !important;
 }
 
 @layer base {
@@ -67,12 +73,12 @@ h1, h2, h3, h4, h5, h6, .font-display {
 .event-pill {
   display: block;
   border-radius: 6px;
-  padding: 2px 6px;
-  font-size: 11px;
-  line-height: 1.2;
+  padding: 3px 8px;
+  font-size: 12px;
+  line-height: 1.25;
   color: #fff;
   font-weight: 500;
-  margin-bottom: 2px;
+  margin-bottom: 3px;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;

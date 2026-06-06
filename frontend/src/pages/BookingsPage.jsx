@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import api, { currency, computeTotals } from "../lib/api";
 import { useAuth } from "../lib/auth";
+import { supabase } from "../lib/supabase";
 import { Button } from "../components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "../components/ui/dialog";
 import { generateInvoicePDF } from "../lib/pdf";
@@ -44,6 +45,20 @@ export default function BookingsPage({ branches, branchId, settings }) {
   };
 
   useEffect(() => { load(); /* eslint-disable-next-line */ }, [branchId]);
+
+  // Realtime — subscribe to bookings changes so multiple staff see the same calendar live.
+  useEffect(() => {
+    if (!supabase) return;
+    const filter = (user.role !== "admin" && user.branch_id)
+      ? `branch_id=eq.${user.branch_id}`
+      : undefined;
+    const ch = supabase
+      .channel(`bookings:${user.id}`)
+      .on("postgres_changes", { event: "*", schema: "public", table: "bookings", ...(filter ? { filter } : {}) }, () => load())
+      .subscribe();
+    return () => { supabase.removeChannel(ch); };
+    /* eslint-disable-next-line */
+  }, [user.id, user.role, user.branch_id]);
 
   const bookingsByDate = useMemo(() => {
     const m = {};
@@ -91,7 +106,7 @@ export default function BookingsPage({ branches, branchId, settings }) {
     <div data-testid="bookings-page">
       <div className="flex items-center justify-between mb-6 gap-4 flex-wrap">
         <div>
-          <div className="overline text-[#8A8D84]">Bookings calendar</div>
+          <div className="eyebrow text-[#8A8D84]">Bookings calendar</div>
           <h1 className="font-display text-3xl lg:text-4xl font-semibold text-[#1A1C18]">
             {cursor.toLocaleString("en-US", { month: "long", year: "numeric" })}
           </h1>
@@ -120,7 +135,7 @@ export default function BookingsPage({ branches, branchId, settings }) {
       <div className="bg-white rounded-2xl border border-[#E5E0D8] shadow-soft overflow-hidden" data-testid="calendar-grid">
         <div className="grid grid-cols-7 bg-[#F9F8F6] border-b border-[#E5E0D8]">
           {["Sun","Mon","Tue","Wed","Thu","Fri","Sat"].map((d) => (
-            <div key={d} className="overline text-[#8A8D84] px-3 py-2.5 text-center">{d}</div>
+            <div key={d} className="eyebrow text-[#8A8D84] px-3 py-2.5 text-center">{d}</div>
           ))}
         </div>
         <div className="grid grid-cols-7">
@@ -138,7 +153,7 @@ export default function BookingsPage({ branches, branchId, settings }) {
                   isToday ? "bg-[#F2EFE9]" : "bg-white"
                 }`}
               >
-                <div className={`text-xs font-semibold mb-1 ${isToday ? "text-[#4A5D23]" : "text-[#5C6056]"}`}>
+                <div className={`text-sm font-semibold mb-1 ${isToday ? "text-[#4A5D23]" : "text-[#5C6056]"}`}>
                   {d.getDate()}
                 </div>
                 <div className="space-y-0.5">
@@ -281,7 +296,7 @@ function BookingDetail({ booking, branch, settings, onEdit, onCancel, onComplete
 
       {booking.notes && (
         <div className="rounded-xl bg-[#F2EFE9] p-3 text-sm text-[#5C6056]">
-          <div className="overline mb-1">Notes</div>
+          <div className="eyebrow mb-1">Notes</div>
           {booking.notes}
         </div>
       )}
@@ -311,7 +326,7 @@ function BookingDetail({ booking, branch, settings, onEdit, onCancel, onComplete
 function Info({ icon: Icon, label, value }) {
   return (
     <div className="rounded-xl bg-[#F9F8F6] border border-[#E5E0D8] p-3">
-      <div className="flex items-center gap-1.5 mb-1 text-[#8A8D84]"><Icon className="h-3.5 w-3.5" /><span className="overline">{label}</span></div>
+      <div className="flex items-center gap-1.5 mb-1 text-[#8A8D84]"><Icon className="h-3.5 w-3.5" /><span className="eyebrow">{label}</span></div>
       <div className="font-medium text-sm">{value}</div>
     </div>
   );

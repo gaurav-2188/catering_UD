@@ -53,7 +53,7 @@ export default function MenuPage({ branches, branchId, setBranchId }) {
     <div data-testid="menu-page">
       <div className="flex items-center justify-between mb-6 flex-wrap gap-3">
         <div>
-          <div className="overline text-[#8A8D84]">Menu management</div>
+          <div className="eyebrow text-[#8A8D84]">Menu management</div>
           <h1 className="font-display text-3xl font-semibold">Menu & pricing</h1>
         </div>
         {user.role === "admin" && (
@@ -66,7 +66,7 @@ export default function MenuPage({ branches, branchId, setBranchId }) {
 
       <div className="grid lg:grid-cols-3 gap-5">
         <div className="bg-white rounded-2xl border border-[#E5E0D8] shadow-soft p-5">
-          <div className="overline text-[#8A8D84] mb-3">Categories</div>
+          <div className="eyebrow text-[#8A8D84] mb-3">Categories</div>
           <div className="space-y-1 mb-3">
             {cats.map((c) => (
               <div key={c.id} className="flex items-center justify-between p-2 rounded-lg hover:bg-[#F2EFE9]" data-testid={`cat-${c.id}`}>
@@ -83,7 +83,7 @@ export default function MenuPage({ branches, branchId, setBranchId }) {
 
         <div className="lg:col-span-2 bg-white rounded-2xl border border-[#E5E0D8] shadow-soft p-5">
           <div className="flex items-center justify-between mb-3">
-            <div className="overline text-[#8A8D84]">Menu items</div>
+            <div className="eyebrow text-[#8A8D84]">Menu items</div>
             <Button data-testid="new-item-btn" disabled={!cats.length}
               onClick={() => setEditItem({ name: "", price: 0, category_id: cats[0]?.id })}
               className="h-9 rounded-xl bg-[#4A5D23] hover:bg-[#3C4B1C] text-white"><Plus className="h-4 w-4 mr-1" /> New item</Button>
@@ -93,7 +93,7 @@ export default function MenuPage({ branches, branchId, setBranchId }) {
             if (!ci.length) return null;
             return (
               <div key={c.id} className="mb-4">
-                <div className="overline text-[#5C6056] mb-1.5">{c.name}</div>
+                <div className="eyebrow text-[#5C6056] mb-1.5">{c.name}</div>
                 <div className="divide-y divide-[#E5E0D8] border border-[#E5E0D8] rounded-xl">
                   {ci.map((it) => (
                     <div key={it.id} className="flex items-center justify-between p-3 hover:bg-[#F2EFE9]">

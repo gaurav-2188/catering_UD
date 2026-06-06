@@ -47,7 +47,7 @@ export default function LoginPage() {
         </div>
         <div>
           <div className="bg-white rounded-2xl p-8 shadow-soft border border-[#E5E0D8]">
-            <div className="overline text-[#8A8D84] mb-2">Sign in</div>
+            <div className="eyebrow text-[#8A8D84] mb-2">Sign in</div>
             <h2 className="font-display text-2xl font-semibold mb-6">Choose your role to continue</h2>
 
             <Tabs value={role} onValueChange={setRole} className="w-full">

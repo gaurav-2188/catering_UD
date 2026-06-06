@@ -30,7 +30,7 @@ export default function BranchesPage({ branches, reload }) {
     <div data-testid="branches-page">
       <div className="flex items-center justify-between mb-6">
         <div>
-          <div className="overline text-[#8A8D84]">Branches</div>
+          <div className="eyebrow text-[#8A8D84]">Branches</div>
           <h1 className="font-display text-3xl font-semibold">Catering branches</h1>
         </div>
         <Button data-testid="new-branch-btn"

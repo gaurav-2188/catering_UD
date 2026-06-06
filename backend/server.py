@@ -86,6 +86,8 @@ def _booking_dict(b: m.Booking) -> dict:
         "customer_name": b.customer_name, "phone": b.phone, "num_people": b.num_people,
         "venue_type": b.venue_type, "venue_address": b.venue_address,
         "event_date": b.event_date, "event_time": b.event_time, "event_end_time": b.event_end_time,
+        "start_at": b.start_at.isoformat() if b.start_at else None,
+        "end_at": b.end_at.isoformat() if b.end_at else None,
         "items": b.items, "discount_amount": float(b.discount_amount or 0),
         "discount_percent": float(b.discount_percent or 0),
         "transportation_cost": float(b.transportation_cost or 0),
@@ -169,12 +171,6 @@ class BookingCreate(BaseModel):
     advance_paid: float = 0
     notes: str = ""
     ignore_conflict: bool = False
-
-    @model_validator(mode="after")
-    def _end_after_start(self):
-        if self.event_end_time <= self.event_time:
-            raise ValueError("event_end_time must be after event_time")
-        return self
 
 
 class BookingUpdate(BaseModel):
@@ -382,14 +378,23 @@ async def delete_menu_item(item_id: str, user: dict = Depends(require_role("admi
 
 
 # ---------- Bookings ----------
-async def _find_conflict(db: AsyncSession, branch_id: str, event_date: str, start: str, end: str, exclude_id: Optional[str] = None) -> Optional[m.Booking]:
-    # Range overlap: existing.start < new.end AND new.start < existing.end
+def _compute_range(event_date: str, start_str: str, end_str: str):
+    """Return (start_at, end_at) datetimes. If end <= start the event is treated
+    as overnight (end is next day)."""
+    start_at = datetime.strptime(f"{event_date} {start_str}", "%Y-%m-%d %H:%M").replace(tzinfo=timezone.utc)
+    end_at = datetime.strptime(f"{event_date} {end_str}", "%Y-%m-%d %H:%M").replace(tzinfo=timezone.utc)
+    if end_at <= start_at:
+        end_at += timedelta(days=1)
+    return start_at, end_at
+
+
+async def _find_conflict(db: AsyncSession, branch_id: str, start_at: datetime, end_at: datetime, exclude_id: Optional[str] = None) -> Optional[m.Booking]:
+    # Range overlap on absolute timestamps — handles overnight events correctly.
     q = select(m.Booking).where(
         m.Booking.branch_id == branch_id,
-        m.Booking.event_date == event_date,
         m.Booking.status != "cancelled",
-        m.Booking.event_time < end,
-        m.Booking.event_end_time > start,
+        m.Booking.start_at < end_at,
+        m.Booking.end_at > start_at,
     )
     if exclude_id:
         q = q.where(m.Booking.id != exclude_id)
@@ -412,8 +417,9 @@ async def list_bookings(branch_id: Optional[str] = None, user: dict = Depends(ge
 async def create_booking(body: BookingCreate, user: dict = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
     if user["role"] != "admin" and user.get("branch_id") != body.branch_id:
         raise HTTPException(403, "Not your branch")
+    new_start, new_end = _compute_range(body.event_date, body.event_time, body.event_end_time)
     if not body.ignore_conflict:
-        existing = await _find_conflict(db, body.branch_id, body.event_date, body.event_time, body.event_end_time)
+        existing = await _find_conflict(db, body.branch_id, new_start, new_end)
         if existing:
             raise HTTPException(status_code=409, detail={"code": "TIME_CONFLICT", "existing_id": existing.id})
     br = await db.execute(select(m.Branch).where(m.Branch.id == body.branch_id))
@@ -424,6 +430,7 @@ async def create_booking(body: BookingCreate, user: dict = Depends(get_current_u
         customer_name=body.customer_name, phone=body.phone, num_people=body.num_people,
         venue_type=body.venue_type, venue_address=body.venue_address,
         event_date=body.event_date, event_time=body.event_time, event_end_time=body.event_end_time,
+        start_at=new_start, end_at=new_end,
         items=[i.model_dump() for i in body.items],
         discount_amount=body.discount_amount, discount_percent=body.discount_percent,
         transportation_cost=body.transportation_cost, advance_paid=body.advance_paid,
@@ -443,12 +450,17 @@ async def update_booking(booking_id: str, body: BookingUpdate, user: dict = Depe
         raise HTTPException(403, "Forbidden")
     update = {k: v for k, v in body.model_dump().items() if v is not None and k != "ignore_conflict"}
     new_date = update.get("event_date", bk.event_date)
-    new_start = update.get("event_time", bk.event_time)
-    new_end = update.get("event_end_time", bk.event_end_time)
-    if (new_date != bk.event_date or new_start != bk.event_time or new_end != bk.event_end_time) and not body.ignore_conflict:
-        existing = await _find_conflict(db, bk.branch_id, new_date, new_start, new_end, exclude_id=booking_id)
-        if existing:
-            raise HTTPException(status_code=409, detail={"code": "TIME_CONFLICT", "existing_id": existing.id})
+    new_start_str = update.get("event_time", bk.event_time)
+    new_end_str = update.get("event_end_time", bk.event_end_time)
+    time_changed = new_date != bk.event_date or new_start_str != bk.event_time or new_end_str != bk.event_end_time
+    if time_changed:
+        new_start, new_end = _compute_range(new_date, new_start_str, new_end_str)
+        if not body.ignore_conflict:
+            existing = await _find_conflict(db, bk.branch_id, new_start, new_end, exclude_id=booking_id)
+            if existing:
+                raise HTTPException(status_code=409, detail={"code": "TIME_CONFLICT", "existing_id": existing.id})
+        update["start_at"] = new_start
+        update["end_at"] = new_end
     if "items" in update:
         update["items"] = [i if isinstance(i, dict) else i.model_dump() for i in update["items"]]
     for k, v in update.items():

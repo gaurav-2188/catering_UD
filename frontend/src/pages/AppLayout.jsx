@@ -47,7 +47,7 @@ export default function AppLayout({ children, branches, branchId, setBranchId, s
             </div>
           </div>
           <div className="flex items-center gap-2 lg:gap-3">
-            <div className="hidden sm:block overline text-[#8A8D84]">Branch</div>
+            <div className="hidden sm:block eyebrow text-[#8A8D84]">Branch</div>
             <Select value={branchId || "all"} onValueChange={setBranchId}>
               <SelectTrigger data-testid="branch-selector" className="h-10 min-w-[220px] rounded-xl border-[#E5E0D8]">
                 <SelectValue placeholder="Select branch" />
@@ -74,7 +74,7 @@ export default function AppLayout({ children, branches, branchId, setBranchId, s
       <div className="flex">
         {/* Sidebar */}
         <aside className="hidden lg:flex flex-col w-60 shrink-0 border-r border-[#E5E0D8] bg-[#F9F8F6] min-h-[calc(100vh-4rem)] p-4">
-          <div className="overline text-[#8A8D84] px-3 mb-3">Workspace</div>
+          <div className="eyebrow text-[#8A8D84] px-3 mb-3">Workspace</div>
           <nav className="space-y-1">
             {nav.map((n) => {
               const active = loc.pathname === n.to;
@@ -83,17 +83,17 @@ export default function AppLayout({ children, branches, branchId, setBranchId, s
                   key={n.to}
                   to={n.to}
                   data-testid={`nav-${n.label.toLowerCase().replace(/\s+/g,"-")}`}
-                  className={`flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-sm font-medium transition-colors ${
+                  className={`flex items-center gap-2.5 px-3 py-3 rounded-xl text-base font-medium transition-colors ${
                     active ? "bg-white text-[#4A5D23] shadow-soft border border-[#E5E0D8]" : "text-[#5C6056] hover:bg-[#F2EFE9]"
                   }`}
                 >
-                  <n.icon className="h-4 w-4" /> {n.label}
+                  <n.icon className="h-5 w-5" /> {n.label}
                 </Link>
               );
             })}
           </nav>
           <div className="mt-auto pt-6 px-3">
-            <div className="overline text-[#8A8D84] mb-1">Signed in as</div>
+            <div className="eyebrow text-[#8A8D84] mb-1">Signed in as</div>
             <div className="text-sm font-medium text-[#1A1C18] truncate">{user.username}</div>
             <div className="text-xs text-[#8A8D84] capitalize mt-0.5">{user.role}</div>
           </div>

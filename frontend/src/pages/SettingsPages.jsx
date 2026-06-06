@@ -21,7 +21,7 @@ export function BranchSettingsPage({ branches, reload }) {
   if (!branch) return <p>No branch assigned.</p>;
   return (
     <div data-testid="branch-settings">
-      <div className="overline text-[#8A8D84]">Branch settings</div>
+      <div className="eyebrow text-[#8A8D84]">Branch settings</div>
       <h1 className="font-display text-3xl font-semibold mb-6">{branch.name}</h1>
       <div className="bg-white rounded-2xl border border-[#E5E0D8] shadow-soft p-6 max-w-md">
         <Label>GST percent</Label>
@@ -61,12 +61,12 @@ export function AdminSettingsPage({ settings, setSettings, branches, reload }) {
 
   return (
     <div data-testid="admin-settings">
-      <div className="overline text-[#8A8D84]">Admin settings</div>
+      <div className="eyebrow text-[#8A8D84]">Admin settings</div>
       <h1 className="font-display text-3xl font-semibold mb-6">Global settings</h1>
 
       <div className="grid lg:grid-cols-2 gap-5">
         <div className="bg-white rounded-2xl border border-[#E5E0D8] shadow-soft p-6">
-          <div className="overline text-[#8A8D84] mb-3">Company logo</div>
+          <div className="eyebrow text-[#8A8D84] mb-3">Company logo</div>
           <div className="flex items-center gap-4 mb-4">
             {settings?.company_logo ? (
               <img src={settings.company_logo} alt="logo" className="h-20 w-20 rounded-xl object-cover border border-[#E5E0D8]" />
@@ -84,7 +84,7 @@ export function AdminSettingsPage({ settings, setSettings, branches, reload }) {
         </div>
 
         <div className="bg-white rounded-2xl border border-[#E5E0D8] shadow-soft p-6">
-          <div className="overline text-[#8A8D84] mb-3">Per-branch GST</div>
+          <div className="eyebrow text-[#8A8D84] mb-3">Per-branch GST</div>
           <div className="space-y-3">
             <div>
               <Label>Branch</Label>
