@@ -1,36 +1,42 @@
 # UD Catering — PRD
 
 ## Original problem statement
-Production-ready Catering Management Web Application with three roles (User/Manager/Admin), branch-scoped operations, unified 3-tab login, calendar view of bookings (In-House vs Outside), booking form with menu by category & financial breakdown, double-booking time-conflict modal, menu/staff/tax management for managers, admin analytics with daily/weekly/monthly/yearly sales and bookings, logo upload, and PDF invoice generation.
+Production-ready Catering Management Web Application — 3 roles (User/Manager/Admin), branch-scoped operations, unified 3-tab login, calendar of bookings (In-House vs Outside), booking form with menu-by-category & financial breakdown, double-booking time-conflict modal, menu/staff/tax management for managers, admin analytics with daily/weekly/monthly/yearly sales and bookings, logo upload, PDF invoice generation.
 
-## Architecture (current)
-- Backend: FastAPI + SQLAlchemy async + asyncpg + **Supabase Postgres** (transaction pooler). JWT auth with bcrypt; role-based dependencies.
-- Schema: managed by Alembic (`/app/backend/alembic`). RLS **enabled** on every table (deny-all to anon/authenticated). Backend connects as `postgres` user via pooler — bypasses RLS — and enforces branch isolation at the application layer.
-- Frontend: React + Tailwind + shadcn UI, react-router-dom, recharts, jsPDF, sonner.
-- Theme: "Organic & Earthy" — sage (#4A5D23) primary, terracotta (#C84B31) secondary.
+## Architecture
+- **Backend**: FastAPI + SQLAlchemy async + asyncpg + **Supabase Postgres** (transaction pooler). JWT (custom) auth with bcrypt. Alembic-managed schema. RLS enabled on every table.
+- **Frontend**: React 19 + Tailwind + shadcn UI, react-router-dom, recharts, jsPDF, sonner, @supabase/supabase-js for **Realtime** subscriptions.
+- **Theme**: Organic & Earthy — sage (#4A5D23), terracotta (#C84B31). Custom Outfit + IBM Plex Sans fonts.
 
 ## What's been implemented
 
-### v1 (2026-02-06)
-- Auth, branches, users (role-aware RBAC), categories, menu items, bookings (exact-time conflict), analytics, settings (logo upload), seed.
-- Frontend: unified login (3 tabs), calendar with colored event pills, day panel, booking detail, booking form with menu picker + live totals, conflict modal, menu/staff/branches mgmt, analytics dashboard, PDF invoice.
+### v1
+Auth, branches, users (role RBAC), categories, menu items, bookings (exact-time conflict), analytics, settings (logo), seed.
+Frontend: unified login (3 tabs), calendar with colored pills, day panel, booking detail/form, conflict modal, mgmt screens, analytics, PDF invoice.
 
-### v2 (2026-02-06)
-- **Removed** weather widget + `/api/weather` endpoint; sidebar layout rebalanced with "Signed in as" footer.
-- **Time-range overlap** conflict detection — bookings now require both `event_time` and `event_end_time`; conflict fires when intervals overlap; touching boundaries do NOT conflict; Pydantic validator enforces `end > start`.
-- **Migrated to Supabase Postgres** via SQLAlchemy + asyncpg + Alembic (transaction pooler). RLS enabled on all six tables.
-- Seed function now idempotent on Postgres.
+### v2
+- Migrated MongoDB → Supabase Postgres (SQLAlchemy + asyncpg + Alembic). RLS enabled on all 6 tables.
+- Time-range overlap conflict (event_time + event_end_time).
+- Weather widget removed; sidebar rebalanced.
+
+### v3 (current)
+- **Overnight events** — bookings store `start_at`/`end_at` TIMESTAMPTZ. If `event_end_time <= event_time`, end_at is next day. Conflict query uses absolute timestamps. Migration `3e900c505c71` backfills existing rows.
+- **Supabase Realtime** — `bookings` added to `supabase_realtime` publication, anon SELECT policy added; frontend subscribes via `@supabase/supabase-js` and refreshes the calendar on any insert/update/delete. Staff in different browsers see the same calendar live.
+- **Combined Discount input** — single number field + inline %/₹ dropdown (default %).
+- **Eyebrow / overline fix** — renamed custom class from `overline` to `eyebrow` to avoid clash with Tailwind's built-in `overline` utility (which was drawing a line above the text).
+- **Global font bump** — html base 16 → 17px; sidebar nav text-sm → text-base; calendar day numbers text-xs → text-sm; table content text-sm → text-base; event pills 11px → 12px. Better readability for staff.
 
 ## Test credentials
 - Admin: `admin@udcatering.com` / `admin123`
-- Manager 1: `manager1` / `manager123` (Main Hall); Manager 2: `manager2` / `manager123` (Downtown)
-- Staff 1: `staff1` / `staff123` (Main Hall); Staff 2: `staff2` / `staff123` (Downtown)
+- Manager 1: `manager1` / `manager123` (Main Hall)
+- Manager 2: `manager2` / `manager123` (Downtown)
+- Staff 1: `staff1` / `staff123` (Main Hall)
+- Staff 2: `staff2` / `staff123` (Downtown)
 
-## Backlog (P1/P2)
-- P1: Overnight events (e.g. 22:00–02:00 next day) — store events as datetimes instead of HH:MM strings
-- P1: DB CHECK constraints / Postgres enums for `role` and `status`
-- P1: Print-friendly booking list / CSV export
-- P1: SMS/Email reminders (Twilio/Resend)
-- P2: Audit log for edits
-- P2: Customer profiles with repeat-booking history
-- P2: Optional real-time multi-user updates via Supabase realtime channels
+## Known trade-offs / Backlog
+- **Realtime privacy**: bookings_anon_read RLS policy exposes booking data (customer name/phone) to anyone with the public anon key (which ships in the browser bundle). Acceptable for an internal staff tool; restrict if app goes B2C.
+- **Timezone**: start_at/end_at stamp the user's wall-clock time as UTC. For multi-timezone tenancy, persist a branch timezone and convert on save.
+- HH:MM strings aren't strict-validated server-side (a malformed string would 500). Add a Pydantic regex.
+- Analytics totals recomputed in Python; move to SQL aggregations at scale.
+- P1: CSV export, SMS/email reminders (Twilio/Resend, would need keys).
+- P2: Audit log, customer repeat-booking history, kitchen prep aggregation across 24-48h.
