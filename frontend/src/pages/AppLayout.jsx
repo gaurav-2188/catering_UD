@@ -1,50 +1,9 @@
-import React, { useEffect, useState } from "react";
-import api from "../lib/api";
+import React from "react";
 import { useAuth } from "../lib/auth";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../components/ui/select";
 import { Button } from "../components/ui/button";
 import { Link, useLocation } from "react-router-dom";
-import { ChefHat, LayoutDashboard, Settings, Users, Building2, ListTree, LogOut, Cloud, CloudDrizzle, CloudLightning, CloudRain, Sun, Wind, CloudSun } from "lucide-react";
-
-const ICONS = { sun: Sun, "cloud-sun": CloudSun, "cloud-drizzle": CloudDrizzle, "cloud-lightning": CloudLightning, "cloud-rain": CloudRain, wind: Wind, cloud: Cloud };
-
-function WeatherWidget() {
-  const [data, setData] = useState(null);
-  useEffect(() => { api.get("/weather").then((r) => setData(r.data)); }, []);
-  if (!data) return null;
-  return (
-    <div className="rounded-2xl bg-white border border-[#E5E0D8] p-4 shadow-soft" data-testid="weather-widget">
-      <div className="flex items-center justify-between mb-3">
-        <div>
-          <div className="overline text-[#8A8D84]">Smart Suggestions</div>
-          <div className="font-display text-sm font-semibold text-[#1A1C18]">Weather forecast</div>
-        </div>
-        <Cloud className="h-4 w-4 text-[#8A8D84]" />
-      </div>
-      <div className="space-y-2">
-        {data.forecast.slice(0, 5).map((d) => {
-          const Ic = ICONS[d.icon] || Cloud;
-          const sev = d.severity === "alert" ? "bg-[#FDF3F3] border-[#EAB8B8] text-[#B33A3A]" :
-                      d.severity === "warn" ? "bg-amber-50 border-amber-200 text-amber-800" :
-                      "bg-[#F2EFE9] border-[#E5E0D8] text-[#5C6056]";
-          return (
-            <div key={d.date} className={`flex items-center gap-3 rounded-xl border p-2.5 ${sev}`}>
-              <Ic className="h-4 w-4 shrink-0" />
-              <div className="flex-1 min-w-0">
-                <div className="text-xs font-semibold truncate">{d.label}</div>
-                <div className="text-[11px] truncate opacity-80">{d.condition}</div>
-              </div>
-              <div className="text-xs font-medium whitespace-nowrap">{d.temp_min}°–{d.temp_max}°</div>
-            </div>
-          );
-        })}
-      </div>
-      <p className="text-[11px] text-[#8A8D84] mt-3 leading-snug">
-        Plan outdoor catering carefully on alert days — consider tents and backup power.
-      </p>
-    </div>
-  );
-}
+import { ChefHat, LayoutDashboard, Settings, Users, Building2, ListTree, LogOut, BarChart3 } from "lucide-react";
 
 export default function AppLayout({ children, branches, branchId, setBranchId, settings }) {
   const { user, logout } = useAuth();
@@ -60,7 +19,7 @@ export default function AppLayout({ children, branches, branchId, setBranchId, s
     ],
     admin: [
       { to: "/", label: "Bookings", icon: LayoutDashboard },
-      { to: "/analytics", label: "Analytics", icon: LayoutDashboard },
+      { to: "/analytics", label: "Analytics", icon: BarChart3 },
       { to: "/menu", label: "Menu", icon: ListTree },
       { to: "/branches", label: "Branches", icon: Building2 },
       { to: "/staff", label: "All Users", icon: Users },
@@ -114,7 +73,8 @@ export default function AppLayout({ children, branches, branchId, setBranchId, s
 
       <div className="flex">
         {/* Sidebar */}
-        <aside className="hidden lg:flex flex-col w-64 shrink-0 border-r border-[#E5E0D8] bg-[#F9F8F6] min-h-[calc(100vh-4rem)] p-5 gap-6">
+        <aside className="hidden lg:flex flex-col w-60 shrink-0 border-r border-[#E5E0D8] bg-[#F9F8F6] min-h-[calc(100vh-4rem)] p-4">
+          <div className="overline text-[#8A8D84] px-3 mb-3">Workspace</div>
           <nav className="space-y-1">
             {nav.map((n) => {
               const active = loc.pathname === n.to;
@@ -132,8 +92,10 @@ export default function AppLayout({ children, branches, branchId, setBranchId, s
               );
             })}
           </nav>
-          <div className="mt-auto">
-            <WeatherWidget />
+          <div className="mt-auto pt-6 px-3">
+            <div className="overline text-[#8A8D84] mb-1">Signed in as</div>
+            <div className="text-sm font-medium text-[#1A1C18] truncate">{user.username}</div>
+            <div className="text-xs text-[#8A8D84] capitalize mt-0.5">{user.role}</div>
           </div>
         </aside>
 

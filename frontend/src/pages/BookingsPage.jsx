@@ -220,7 +220,7 @@ export default function BookingsPage({ branches, branchId, settings }) {
             </div>
             <h3 className="font-display text-2xl font-semibold text-[#B33A3A] mb-2">Warning: Time Conflict Detected!</h3>
             <p className="text-sm text-[#5C6056] mb-6">
-              Another booking already exists at this branch on the same date and time.
+              Another booking already overlaps with this time window at this branch.
               Review both bookings before confirming.
             </p>
             <div className="flex gap-2 justify-center">
@@ -254,7 +254,7 @@ function BookingDetail({ booking, branch, settings, onEdit, onCancel, onComplete
       </div>
 
       <div className="grid grid-cols-2 gap-3">
-        <Info icon={Clock} label="Date & Time" value={`${booking.event_date} · ${booking.event_time}`} />
+        <Info icon={Clock} label="Date & Time" value={`${booking.event_date} · ${booking.event_time}${booking.event_end_time ? `–${booking.event_end_time}` : ""}`} />
         <Info icon={Users} label="Guests" value={booking.num_people} />
         <Info icon={MapPin} label="Venue" value={booking.venue_address || (booking.venue_type === "in_house" ? "Party Hall" : "—")} />
         <Info icon={FileText} label="GST" value={`${booking.gst_percent}%`} />

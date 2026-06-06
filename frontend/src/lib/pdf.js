@@ -50,7 +50,7 @@ export function generateInvoicePDF({ booking, branch, settings, fileName }) {
 
   doc.setFontSize(11);
   doc.setTextColor(20);
-  doc.text(`${booking.event_date} • ${booking.event_time}`, 320, y + 18);
+  doc.text(`${booking.event_date} • ${booking.event_time}${booking.event_end_time ? `–${booking.event_end_time}` : ""}`, 320, y + 18);
   doc.setFontSize(9);
   doc.setTextColor(80);
   doc.text(`Type: ${booking.venue_type === "in_house" ? "In-House" : "Outside Catering"}`, 320, y + 34);

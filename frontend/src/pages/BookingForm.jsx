@@ -21,6 +21,7 @@ export default function BookingForm({ branches, currentBranchId, initial, onCanc
   const [venue_address, setVenueAddr] = useState(initial?.venue_address || "");
   const [event_date, setDate] = useState(initial?.event_date || new Date().toISOString().slice(0, 10));
   const [event_time, setTime] = useState(initial?.event_time || "19:00");
+  const [event_end_time, setEndTime] = useState(initial?.event_end_time || "22:00");
   const [discount_amount, setDiscAmt] = useState(initial?.discount_amount || 0);
   const [discount_percent, setDiscPct] = useState(initial?.discount_percent || 0);
   const [transportation_cost, setTransport] = useState(initial?.transportation_cost || 0);
@@ -59,9 +60,10 @@ export default function BookingForm({ branches, currentBranchId, initial, onCanc
   const submit = (e) => {
     e.preventDefault();
     if (!items.length) return alert("Add at least one menu item.");
+    if (event_end_time <= event_time) return alert("End time must be after start time.");
     onSubmit({
       branch_id: branchId, customer_name, phone, num_people: Number(num_people),
-      venue_type, venue_address, event_date, event_time,
+      venue_type, venue_address, event_date, event_time, event_end_time,
       items,
       discount_amount: Number(discount_amount), discount_percent: Number(discount_percent),
       transportation_cost: Number(transportation_cost), advance_paid: Number(advance_paid),
@@ -107,7 +109,8 @@ export default function BookingForm({ branches, currentBranchId, initial, onCanc
           </div>
           <Field label="Venue address"><Input data-testid="form-venue-address" value={venue_address} onChange={(e) => setVenueAddr(e.target.value)} placeholder={venue_type === "in_house" ? "Optional" : "Required for outside catering"} className="h-12 rounded-xl" /></Field>
           <Field label="Event date"><Input data-testid="form-date" type="date" required value={event_date} onChange={(e) => setDate(e.target.value)} className="h-12 rounded-xl" /></Field>
-          <Field label="Event time"><Input data-testid="form-time" type="time" required value={event_time} onChange={(e) => setTime(e.target.value)} className="h-12 rounded-xl" /></Field>
+          <Field label="Start time"><Input data-testid="form-time" type="time" required value={event_time} onChange={(e) => setTime(e.target.value)} className="h-12 rounded-xl" /></Field>
+          <Field label="End time"><Input data-testid="form-end-time" type="time" required value={event_end_time} onChange={(e) => setEndTime(e.target.value)} className="h-12 rounded-xl" /></Field>
         </div>
       </Section>
 

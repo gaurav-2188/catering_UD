@@ -147,7 +147,8 @@ class Booking(BaseModel):
     venue_type: Literal["in_house", "outside"]
     venue_address: str = ""
     event_date: str  # YYYY-MM-DD
-    event_time: str  # HH:MM
+    event_time: str  # HH:MM (start)
+    event_end_time: str  # HH:MM (end)
     items: List[BookingItem]
     discount_amount: float = 0
     discount_percent: float = 0
@@ -168,6 +169,7 @@ class BookingCreate(BaseModel):
     venue_address: str = ""
     event_date: str
     event_time: str
+    event_end_time: str
     items: List[BookingItem]
     discount_amount: float = 0
     discount_percent: float = 0
@@ -184,6 +186,7 @@ class BookingUpdate(BaseModel):
     venue_address: Optional[str] = None
     event_date: Optional[str] = None
     event_time: Optional[str] = None
+    event_end_time: Optional[str] = None
     items: Optional[List[BookingItem]] = None
     discount_amount: Optional[float] = None
     discount_percent: Optional[float] = None
@@ -362,12 +365,14 @@ async def delete_menu_item(item_id: str, user: dict = Depends(require_role("admi
     return {"ok": True}
 
 # ---------- Bookings ----------
-def _check_conflict_query(branch_id: str, event_date: str, event_time: str, exclude_id: Optional[str] = None):
+def _check_conflict_query(branch_id: str, event_date: str, start: str, end: str, exclude_id: Optional[str] = None):
+    # Two intervals overlap iff existing.start < new.end AND new.start < existing.end
     q = {
         "branch_id": branch_id,
         "event_date": event_date,
-        "event_time": event_time,
         "status": {"$ne": "cancelled"},
+        "event_time": {"$lt": end},
+        "event_end_time": {"$gt": start},
     }
     if exclude_id:
         q["id"] = {"$ne": exclude_id}
@@ -389,7 +394,7 @@ async def create_booking(body: BookingCreate, user: dict = Depends(get_current_u
     if user["role"] != "admin" and user.get("branch_id") != body.branch_id:
         raise HTTPException(403, "Not your branch")
     if not body.ignore_conflict:
-        existing = await db.bookings.find_one(_check_conflict_query(body.branch_id, body.event_date, body.event_time))
+        existing = await db.bookings.find_one(_check_conflict_query(body.branch_id, body.event_date, body.event_time, body.event_end_time))
         if existing:
             raise HTTPException(status_code=409, detail={"code": "TIME_CONFLICT", "existing_id": existing["id"]})
     branch = await db.branches.find_one({"id": body.branch_id}, {"_id": 0})
@@ -412,9 +417,11 @@ async def update_booking(booking_id: str, body: BookingUpdate, user: dict = Depe
     update = {k: v for k, v in body.model_dump().items() if v is not None and k != "ignore_conflict"}
     # Conflict check if date/time changed
     new_date = update.get("event_date", bk["event_date"])
-    new_time = update.get("event_time", bk["event_time"])
-    if (new_date != bk["event_date"] or new_time != bk["event_time"]) and not body.ignore_conflict:
-        existing = await db.bookings.find_one(_check_conflict_query(bk["branch_id"], new_date, new_time, exclude_id=booking_id))
+    new_start = update.get("event_time", bk["event_time"])
+    new_end = update.get("event_end_time", bk.get("event_end_time", bk["event_time"]))
+    time_changed = new_date != bk["event_date"] or new_start != bk["event_time"] or new_end != bk.get("event_end_time")
+    if time_changed and not body.ignore_conflict:
+        existing = await db.bookings.find_one(_check_conflict_query(bk["branch_id"], new_date, new_start, new_end, exclude_id=booking_id))
         if existing:
             raise HTTPException(status_code=409, detail={"code": "TIME_CONFLICT", "existing_id": existing["id"]})
     if update:
@@ -506,35 +513,6 @@ async def analytics_summary(branch_id: Optional[str] = None, user: dict = Depend
         "monthly_series": sorted(monthly_series.values(), key=lambda x: x["month"]),
     }
 
-# ---------- Weather (simulated) ----------
-@api.get("/weather")
-async def weather(user: dict = Depends(get_current_user)):
-    import random
-    random.seed(datetime.now(timezone.utc).strftime("%Y-%m-%d"))
-    conditions = [
-        ("Clear sky", "sun", "ok"),
-        ("Partly cloudy", "cloud-sun", "ok"),
-        ("Light showers", "cloud-drizzle", "warn"),
-        ("Thunderstorm", "cloud-lightning", "alert"),
-        ("Heavy rain", "cloud-rain", "alert"),
-        ("Sunny & breezy", "wind", "ok"),
-    ]
-    today = datetime.now(timezone.utc).date()
-    forecast = []
-    for i in range(5):
-        d = today + timedelta(days=i)
-        cond = random.choice(conditions)
-        forecast.append({
-            "date": d.isoformat(),
-            "label": "Today" if i == 0 else ("Tomorrow" if i == 1 else d.strftime("%a, %d %b")),
-            "condition": cond[0],
-            "icon": cond[1],
-            "severity": cond[2],
-            "temp_min": random.randint(20, 26),
-            "temp_max": random.randint(28, 38),
-        })
-    return {"forecast": forecast}
-
 # ---------- Seed ----------
 async def seed():
     # Admin
@@ -599,6 +577,16 @@ async def seed():
 @app.on_event("startup")
 async def on_start():
     await db.users.create_index([("username", 1), ("role", 1)], unique=True)
+    # Backfill: any existing booking without event_end_time gets start + 3h
+    cursor = db.bookings.find({"event_end_time": {"$exists": False}}, {"_id": 0, "id": 1, "event_time": 1})
+    async for bk in cursor:
+        try:
+            h, m = [int(x) for x in bk["event_time"].split(":")]
+            end_h = (h + 3) % 24
+            end = f"{end_h:02d}:{m:02d}"
+        except Exception:
+            end = "23:59"
+        await db.bookings.update_one({"id": bk["id"]}, {"$set": {"event_end_time": end}})
     await seed()
 
 @app.on_event("shutdown")
