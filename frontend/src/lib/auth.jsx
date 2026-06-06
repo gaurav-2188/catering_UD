@@ -1,7 +1,8 @@
 import React, { createContext, useCallback, useContext, useEffect, useState } from "react";
 import api from "./api";
 
-const AuthCtx = createContext(null);
+// 1. Explicitly create and export the AuthCtx context object
+export const AuthCtx = createContext(null);
 
 export function AuthProvider({ children }) {
   const [user, setUser] = useState(null);
@@ -11,7 +12,7 @@ export function AuthProvider({ children }) {
   const [loading, setLoading] = useState(true);
 
   const applyBootstrap = useCallback((data) => {
-    // Normalizing the role name mapping (DB 'user' maps to UI 'staff' context)
+    // Normalizing role name mapping (DB 'user' maps to UI 'staff' context)
     const normalizedUser = data.user ? {
       ...data.user,
       role: data.user.role === "user" ? "staff" : data.user.role
@@ -26,7 +27,6 @@ export function AuthProvider({ children }) {
     if (data.settings) {
       document.title = "UD Catering";
       
-      // Look for favicon_url key inside settings array or object
       const faviconUrl = Array.isArray(data.settings) 
         ? data.settings.find(s => s.key === 'favicon_url')?.value 
         : data.settings.favicon_url;
@@ -59,9 +59,7 @@ export function AuthProvider({ children }) {
   }, [applyBootstrap]);
 
   const login = async ({ username, password, role }) => {
-    // Convert 'staff' role label back to 'user' for backend validation match
     const backendRole = role === "staff" ? "user" : role;
-    
     const r = await api.post("/auth/login", { username, password, role: backendRole });
     localStorage.setItem("ud_token", r.data.token);
     
@@ -97,3 +95,6 @@ export function AuthProvider({ children }) {
 }
 
 export const useAuth = () => useContext(AuthCtx);
+
+// 2. Add a default export to prevent import mix-ups in AppProvider trees
+export default AuthProvider;
