@@ -3,11 +3,6 @@ import api from "./api";
 
 const AuthCtx = createContext(null);
 
-/**
- * Holds the authenticated session AND the initial bootstrap payload
- * (branches, settings, bookings) so the rest of the app renders with
- * zero additional round-trips on page load.
- */
 export function AuthProvider({ children }) {
   const [user, setUser] = useState(null);
   const [branches, setBranches] = useState([]);
@@ -16,7 +11,7 @@ export function AuthProvider({ children }) {
   const [loading, setLoading] = useState(true);
 
   const applyBootstrap = useCallback((data) => {
-    // Normalizing role name mapping ("user" from DB corresponds to "staff" functionality)
+    // Normalizing the role name mapping (DB 'user' maps to UI 'staff' context)
     const normalizedUser = data.user ? {
       ...data.user,
       role: data.user.role === "user" ? "staff" : data.user.role
@@ -27,38 +22,49 @@ export function AuthProvider({ children }) {
     setSettings(data.settings || null);
     setInitialBookings(data.bookings || []);
 
-    // Perform dynamic browser tab updates if matching setting entries exist
+    // Brand Optimizations: Update browser title and load favicon from settings dynamically
     if (data.settings) {
       document.title = "UD Catering";
-      if (data.settings.favicon_url) {
+      
+      // Look for favicon_url key inside settings array or object
+      const faviconUrl = Array.isArray(data.settings) 
+        ? data.settings.find(s => s.key === 'favicon_url')?.value 
+        : data.settings.favicon_url;
+
+      if (faviconUrl) {
         let link = document.querySelector("link[rel~='icon']");
         if (!link) {
           link = document.createElement("link");
           link.rel = "icon";
           document.head.appendChild(link);
         }
-        link.href = data.settings.favicon_url;
+        link.href = faviconUrl;
       }
     }
   }, []);
 
-  // On page refresh: validate token + load everything in a single request.
+  // Check storage and load app data on page refresh
   useEffect(() => {
     const token = localStorage.getItem("ud_token");
-    if (!token) { setLoading(false); return; }
+    if (!token) { 
+      setLoading(false); 
+      return; 
+    }
     api.get("/bootstrap")
       .then((r) => applyBootstrap(r.data))
-      .catch(() => { localStorage.removeItem("ud_token"); })
+      .catch(() => { 
+        localStorage.removeItem("ud_token"); 
+      })
       .finally(() => setLoading(false));
   }, [applyBootstrap]);
 
   const login = async ({ username, password, role }) => {
-    // Map client "staff" role label back to backend "user" role matching table column constraints
+    // Convert 'staff' role label back to 'user' for backend validation match
     const backendRole = role === "staff" ? "user" : role;
+    
     const r = await api.post("/auth/login", { username, password, role: backendRole });
     localStorage.setItem("ud_token", r.data.token);
     
-    // Immediately fetch bootstrap with the new token so the layout maps correctly
     const b = await api.get("/bootstrap");
     applyBootstrap(b.data);
     return b.data.user;
@@ -66,12 +72,16 @@ export function AuthProvider({ children }) {
 
   const logout = () => {
     localStorage.removeItem("ud_token");
-    setUser(null); setBranches([]); setSettings(null); setInitialBookings([]);
+    setUser(null); 
+    setBranches([]); 
+    setSettings(null); 
+    setInitialBookings([]);
   };
 
   const refreshLayout = useCallback(async () => {
     const [br, st] = await Promise.all([api.get("/branches"), api.get("/settings")]);
-    setBranches(br.data); setSettings(st.data);
+    setBranches(br.data); 
+    setSettings(st.data);
     return br.data;
   }, []);
 
