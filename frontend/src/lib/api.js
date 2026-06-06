@@ -1,11 +1,10 @@
 import axios from "axios";
 
+// This checks if a production API URL is set in Netlify, otherwise falls back to localhost for local testing
 const api = axios.create({
-  // This uses your production backend URL when deployed, or falls back to local testing
   baseURL: process.env.REACT_APP_API_URL || "http://localhost:8000/api",
 });
 
-// Automatically inject your auth token into headers if it exists
 api.interceptors.request.use((config) => {
   const token = localStorage.getItem("ud_token");
   if (token) {
