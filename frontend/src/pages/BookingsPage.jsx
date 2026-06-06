@@ -22,16 +22,18 @@ function monthMatrix(year, month) {
 }
 const fmtYMD = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 
-export default function BookingsPage({ branches, branchId, settings }) {
+export default function BookingsPage({ branches, branchId, settings, initialBookings = [] }) {
   const { user } = useAuth();
-  const [bookings, setBookings] = useState([]);
+  const [bookings, setBookings] = useState(initialBookings);
   const [cursor, setCursor] = useState(() => { const n = new Date(); return new Date(n.getFullYear(), n.getMonth(), 1); });
   const [dayPanel, setDayPanel] = useState(null);
   const [openBooking, setOpenBooking] = useState(null);
   const [formOpen, setFormOpen] = useState(false);
   const [editing, setEditing] = useState(null);
   const [conflict, setConflict] = useState(null);
-  const [confirm, setConfirm] = useState(null); // { kind: "complete"|"cancel", booking }
+  const [confirm, setConfirm] = useState(null);
+  // Skip the first refetch if we already have bootstrap data — eliminates a redundant /bookings RTT on page load.
+  const skipFirstFetch = React.useRef(initialBookings && initialBookings.length >= 0 && initialBookings === bookings);
 
   const effectiveBranchId = user.role === "admin" ? branchId : user.branch_id;
 
@@ -41,21 +43,26 @@ export default function BookingsPage({ branches, branchId, settings }) {
     setBookings(r.data);
   };
 
-  useEffect(() => { load(); /* eslint-disable-next-line */ }, [effectiveBranchId]);
+  useEffect(() => {
+    if (skipFirstFetch.current) { skipFirstFetch.current = false; return; }
+    load();
+    /* eslint-disable-next-line */
+  }, [effectiveBranchId]);
 
-  // Live updates — subscribe to the non-PII bookings_signal table (no customer data leaks via realtime payload).
+  // Live updates — narrowly scoped: filter on the currently-active branch when one is selected.
+  // For Admin viewing "All branches", we intentionally subscribe without a filter.
   useEffect(() => {
     if (!supabase) return;
-    const filter = (user.role !== "admin" && user.branch_id)
-      ? `branch_id=eq.${user.branch_id}`
+    const branchFilter = (effectiveBranchId && effectiveBranchId !== "all")
+      ? `branch_id=eq.${effectiveBranchId}`
       : undefined;
     const ch = supabase
-      .channel(`bookings_signal:${user.id}`)
-      .on("postgres_changes", { event: "INSERT", schema: "public", table: "bookings_signal", ...(filter ? { filter } : {}) }, () => load())
+      .channel(`bookings_signal:${user.id}:${effectiveBranchId || "all"}`)
+      .on("postgres_changes", { event: "INSERT", schema: "public", table: "bookings_signal", ...(branchFilter ? { filter: branchFilter } : {}) }, () => load())
       .subscribe();
     return () => { supabase.removeChannel(ch); };
     /* eslint-disable-next-line */
-  }, [user.id, user.role, user.branch_id]);
+  }, [user.id, effectiveBranchId]);
 
   // Calendar shows ONLY active "booked" events; completed & cancelled live in Previous Bookings.
   const calendarBookings = useMemo(() => bookings.filter((b) => b.status === "booked"), [bookings]);

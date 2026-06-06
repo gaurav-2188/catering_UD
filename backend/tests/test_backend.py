@@ -773,6 +773,152 @@ class TestIter4Realtime:
         assert any(a in ("DELETE", "D") for a in actions), f"delete signal missing; got {actions}"
 
 
+# ---------- Iteration 5: /api/bootstrap (single round-trip) ----------
+class TestIter5Bootstrap:
+    """Iteration 5: GET /api/bootstrap returns {user, branches, settings, bookings}.
+    Bookings are role-scoped: admin sees all branches; manager/user only their own branch.
+    /api/auth/me must continue to return the same user payload."""
+
+    def test_bootstrap_requires_auth(self, s):
+        r = s.get(f"{API}/bootstrap")
+        assert r.status_code == 401, f"expected 401, got {r.status_code}: {r.text}"
+
+    def test_bootstrap_invalid_token_401(self, s):
+        r = s.get(f"{API}/bootstrap", headers={"Authorization": "Bearer not.a.valid.token"})
+        assert r.status_code == 401
+
+    def test_bootstrap_admin_shape_and_keys(self, s, admin):
+        r = s.get(f"{API}/bootstrap", headers=hdr(admin))
+        assert r.status_code == 200, r.text
+        d = r.json()
+        for k in ("user", "branches", "settings", "bookings"):
+            assert k in d, f"bootstrap missing key '{k}'; have {list(d.keys())}"
+        assert isinstance(d["branches"], list) and len(d["branches"]) >= 2
+        assert isinstance(d["bookings"], list)
+        assert isinstance(d["settings"], dict) and "id" in d["settings"]
+
+    def test_bootstrap_user_matches_auth_me(self, s, admin):
+        rb = s.get(f"{API}/bootstrap", headers=hdr(admin))
+        rm = s.get(f"{API}/auth/me", headers=hdr(admin))
+        assert rb.status_code == 200 and rm.status_code == 200
+        bu = rb.json()["user"]; mu = rm.json()
+        # The exact same dict shape — same id/role/username/branch_id
+        for k in ("id", "username", "role", "branch_id"):
+            assert bu.get(k) == mu.get(k), f"mismatch on '{k}': bootstrap={bu.get(k)}, me={mu.get(k)}"
+
+    def test_bootstrap_admin_sees_all_branches_bookings(self, s, admin, branches):
+        r = s.get(f"{API}/bootstrap", headers=hdr(admin))
+        assert r.status_code == 200
+        bookings = r.json()["bookings"]
+        # Admin should see bookings from more than one branch (we have seeded 2+ branches and
+        # the test suite creates bookings on Main Hall — but admin scope should still NOT filter).
+        branch_ids_in_bookings = {b["branch_id"] for b in bookings}
+        # Compare against GET /api/bookings as admin — admin should match (no filter)
+        rl = s.get(f"{API}/bookings", headers=hdr(admin))
+        assert rl.status_code == 200
+        list_ids = {b["id"] for b in rl.json()}
+        boot_ids = {b["id"] for b in bookings}
+        assert boot_ids == list_ids, (
+            f"admin bootstrap bookings differ from GET /api/bookings; "
+            f"only in bootstrap: {boot_ids - list_ids}, only in list: {list_ids - boot_ids}"
+        )
+
+    def test_bootstrap_manager_scoped_to_own_branch(self, s, manager1):
+        r = s.get(f"{API}/bootstrap", headers=hdr(manager1))
+        assert r.status_code == 200, r.text
+        d = r.json()
+        own_bid = manager1["user"]["branch_id"]
+        assert own_bid is not None
+        bookings = d["bookings"]
+        for b in bookings:
+            assert b["branch_id"] == own_bid, (
+                f"manager bootstrap leaked branch {b['branch_id']} (own={own_bid}) for booking {b['id']}"
+            )
+
+    def test_bootstrap_staff_scoped_to_own_branch(self, s, staff1):
+        r = s.get(f"{API}/bootstrap", headers=hdr(staff1))
+        assert r.status_code == 200, r.text
+        d = r.json()
+        own_bid = staff1["user"]["branch_id"]
+        assert own_bid is not None
+        for b in d["bookings"]:
+            assert b["branch_id"] == own_bid, (
+                f"staff bootstrap leaked branch {b['branch_id']} (own={own_bid})"
+            )
+
+    def test_bootstrap_manager2_isolated_from_manager1(self, s, manager1, manager2):
+        r1 = s.get(f"{API}/bootstrap", headers=hdr(manager1))
+        r2 = s.get(f"{API}/bootstrap", headers=hdr(manager2))
+        assert r1.status_code == 200 and r2.status_code == 200
+        b1 = {b["id"] for b in r1.json()["bookings"]}
+        b2 = {b["id"] for b in r2.json()["bookings"]}
+        assert b1.isdisjoint(b2), f"managers across branches see overlapping bookings: {b1 & b2}"
+
+    def test_bootstrap_booking_includes_full_fields(self, s, staff1, main_branch, created_bookings):
+        # Create a booking, then verify bootstrap returns it with start_at, end_at, total_amount
+        d = (date.today() + timedelta(days=470)).isoformat()
+        payload = _booking_payload(main_branch["id"], "11:00", "12:00", "bootShape", date_=d)
+        payload["num_people"] = 5
+        payload["items"] = [{"item_id": "x", "name": "Test", "price": 100, "quantity": 1}]
+        rc = s.post(f"{API}/bookings", json=payload, headers=hdr(staff1))
+        assert rc.status_code == 200, rc.text
+        bid = rc.json()["id"]
+        created_bookings.append(bid)
+        rb = s.get(f"{API}/bootstrap", headers=hdr(staff1))
+        assert rb.status_code == 200
+        match = next((b for b in rb.json()["bookings"] if b["id"] == bid), None)
+        assert match is not None, f"booking {bid} not in bootstrap output"
+        for k in ("start_at", "end_at", "total_amount", "event_date", "event_time", "event_end_time", "status", "gst_percent"):
+            assert k in match, f"bootstrap booking missing '{k}'; keys={list(match.keys())}"
+        assert match["start_at"].startswith(d + "T11:00")
+        assert match["end_at"].startswith(d + "T12:00")
+        assert isinstance(match["total_amount"], (int, float)) and match["total_amount"] > 0
+
+    def test_bootstrap_branches_match_branches_endpoint(self, s, admin):
+        # Fetch both back-to-back so any concurrently-created test branches are reflected in both.
+        rb = s.get(f"{API}/bootstrap", headers=hdr(admin))
+        rl = s.get(f"{API}/branches", headers=hdr(admin))
+        assert rb.status_code == 200 and rl.status_code == 200
+        bid_boot = {b["id"] for b in rb.json()["branches"]}
+        bid_list = {b["id"] for b in rl.json()}
+        assert bid_boot == bid_list, f"branches diverge: bootstrap-only={bid_boot - bid_list}, list-only={bid_list - bid_boot}"
+
+    def test_auth_me_still_works(self, s, admin, manager1, staff1):
+        for tok in (admin, manager1, staff1):
+            r = s.get(f"{API}/auth/me", headers=hdr(tok))
+            assert r.status_code == 200, r.text
+            assert r.json()["id"] == tok["user"]["id"]
+
+
+# ---------- Iteration 5: DB indexes assertion ----------
+class TestIter5Indexes:
+    """Iteration 5: required PG indexes for the perf pass."""
+
+    def _indexes_on(self, pg_conn, table):
+        cur = pg_conn.cursor()
+        cur.execute(
+            "SELECT indexname, indexdef FROM pg_indexes "
+            "WHERE schemaname='public' AND tablename=%s",
+            (table,),
+        )
+        rows = cur.fetchall()
+        cur.close()
+        return rows
+
+    def test_bookings_indexes_present(self, pg_conn):
+        rows = self._indexes_on(pg_conn, "bookings")
+        defs = " | ".join(d for _, d in rows).lower()
+        # branch_id index
+        assert "(branch_id)" in defs or "branch_id," in defs, f"bookings.branch_id index missing; defs={defs}"
+        # event_date index
+        assert "event_date" in defs, f"bookings.event_date index missing; defs={defs}"
+
+    def test_users_branch_id_index_present(self, pg_conn):
+        rows = self._indexes_on(pg_conn, "users")
+        defs = " | ".join(d for _, d in rows).lower()
+        assert "branch_id" in defs, f"users.branch_id index missing; defs={defs}"
+
+
 # ---------- Teardown ----------
 @pytest.fixture(scope="session", autouse=True)
 def cleanup(s, admin, created_bookings, created_user_ids, created_branch_ids):

@@ -245,6 +245,31 @@ async def me(user: dict = Depends(get_current_user)):
     return user
 
 
+@api.get("/bootstrap")
+async def bootstrap(user: dict = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    """Single round-trip used on app load — returns the authenticated user
+    plus every initial blob (branches, settings, role-scoped bookings) so the
+    client can render the calendar without a request waterfall."""
+    # Parallel-equivalent: 3 small queries on the same connection
+    branches_res = await db.execute(select(m.Branch).order_by(m.Branch.name))
+    branches = [_branch_dict(b) for b in branches_res.scalars().all()]
+
+    settings_res = await db.execute(select(m.Settings).where(m.Settings.id == "global"))
+    s = settings_res.scalar_one_or_none()
+    if not s:
+        s = m.Settings(id="global", company_logo="")
+        db.add(s); await db.commit(); await db.refresh(s)
+    settings_dict = {"id": s.id, "company_logo": s.company_logo or ""}
+
+    bq = select(m.Booking)
+    if user["role"] in ("user", "manager"):
+        bq = bq.where(m.Booking.branch_id == user.get("branch_id"))
+    bres = await db.execute(bq.order_by(m.Booking.event_date.desc(), m.Booking.event_time))
+    bookings = [_booking_dict(b) for b in bres.scalars().all()]
+
+    return {"user": user, "branches": branches, "settings": settings_dict, "bookings": bookings}
+
+
 # ---------- Branches ----------
 @api.get("/branches")
 async def list_branches(user: dict = Depends(get_current_user), db: AsyncSession = Depends(get_db)):

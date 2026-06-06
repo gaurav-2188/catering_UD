@@ -13,31 +13,36 @@ const formatDate = (s) => {
   catch { return s; }
 };
 
-export default function PreviousBookingsPage({ branches, branchId, settings }) {
+export default function PreviousBookingsPage({ branches, branchId, settings, initialBookings = [] }) {
   const { user } = useAuth();
   const effective = user.role === "admin" ? branchId : user.branch_id;
-  const [bookings, setBookings] = useState([]);
+  const [bookings, setBookings] = useState(initialBookings);
   const [tab, setTab] = useState("completed");
   const [open, setOpen] = useState(null);
+  const skipFirstFetch = React.useRef(initialBookings && initialBookings.length >= 0 && initialBookings === bookings);
 
   const load = async () => {
     const params = user.role === "admin" && effective && effective !== "all" ? { branch_id: effective } : {};
     const r = await api.get("/bookings", { params });
     setBookings(r.data);
   };
-  useEffect(() => { load(); /* eslint-disable-next-line */ }, [effective]);
+  useEffect(() => {
+    if (skipFirstFetch.current) { skipFirstFetch.current = false; return; }
+    load();
+    /* eslint-disable-next-line */
+  }, [effective]);
 
-  // Live updates so the archive stays in sync with the calendar (via non-PII signal table)
+  // Live updates — narrowly scoped to the active branch (or all branches for Admin)
   useEffect(() => {
     if (!supabase) return;
-    const filter = (user.role !== "admin" && user.branch_id) ? `branch_id=eq.${user.branch_id}` : undefined;
+    const branchFilter = (effective && effective !== "all") ? `branch_id=eq.${effective}` : undefined;
     const ch = supabase
-      .channel(`prev_signal:${user.id}`)
-      .on("postgres_changes", { event: "INSERT", schema: "public", table: "bookings_signal", ...(filter ? { filter } : {}) }, () => load())
+      .channel(`prev_signal:${user.id}:${effective || "all"}`)
+      .on("postgres_changes", { event: "INSERT", schema: "public", table: "bookings_signal", ...(branchFilter ? { filter: branchFilter } : {}) }, () => load())
       .subscribe();
     return () => { supabase.removeChannel(ch); };
     /* eslint-disable-next-line */
-  }, [user.id, user.role, user.branch_id]);
+  }, [user.id, effective]);
 
   const sorted = useMemo(() => {
     return [...bookings].sort((a, b) => {
