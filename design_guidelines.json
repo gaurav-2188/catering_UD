@@ -1,0 +1,124 @@
+{
+  "theme": "light",
+  "archetype": "Organic & Earthy",
+  "domain": "Catering Management Web Application",
+  "mood": "Warm, trustworthy, professional, appetizing, calm under pressure.",
+  "typography": {
+    "headings": {
+      "fontFamily": "Outfit, sans-serif",
+      "weights": ["400", "500", "600"],
+      "usage": "Friendly, clean, approachable structure. Tracking tight."
+    },
+    "body": {
+      "fontFamily": "IBM Plex Sans, sans-serif",
+      "weights": ["400", "500"],
+      "usage": "Highly legible for dense data tables, schedules, and admin analytics."
+    },
+    "rules": [
+      "No generic fonts like Inter, Roboto, or Open Sans for headings.",
+      "H1 should not exceed text-5xl.",
+      "Overlines and labels must be uppercase, text-xs, tracking-[0.2em]."
+    ]
+  },
+  "colors": {
+    "background": "#F9F8F6",
+    "surface": "#FFFFFF",
+    "surfaceHover": "#F2EFE9",
+    "border": "#E5E0D8",
+    "primary": {
+      "DEFAULT": "#4A5D23",
+      "hover": "#3C4B1C",
+      "foreground": "#FFFFFF",
+      "usage": "Brand identity, Primary Actions, In-House Catering events on Calendar."
+    },
+    "secondary": {
+      "DEFAULT": "#C84B31",
+      "hover": "#A63D28",
+      "foreground": "#FFFFFF",
+      "usage": "Secondary Actions, Outside Catering events on Calendar."
+    },
+    "text": {
+      "primary": "#1A1C18",
+      "secondary": "#5C6056",
+      "muted": "#8A8D84"
+    },
+    "alert": {
+      "DEFAULT": "#B33A3A",
+      "background": "#FDF3F3",
+      "border": "#EAB8B8"
+    }
+  },
+  "layout_and_spacing": {
+    "philosophy": "Generous internal spacing inside containers (p-6, p-8) mixed with tight structural gaps (gap-4, gap-6) for a dense, data-rich but breathable Control Room dashboard.",
+    "radius": "rounded-2xl for main cards, rounded-xl for inner elements (buttons, inputs) to add physical warmth.",
+    "shadows": "Ambient diffuse shadows: shadow-[0_8px_30px_rgb(0,0,0,0.04)] for surfaces, flat for data tables.",
+    "grid": "Bento 'Control Room' Grid for dashboard widgets. All pixels utilized, no jagged bottoms. h-full on children."
+  },
+  "components": {
+    "login_page": {
+      "layout": "Split screen. Left side: High-quality catering/chef image with subtle black/20 overlay. Right side: Login form container.",
+      "form": "Unified Login card with 3 Tabs (User, Manager, Admin). Soft shadow, rounded-2xl. Background Bone White (#F9F8F6)."
+    },
+    "header": {
+      "design": "Sticky header, z-50. Solid surface (#FFFFFF) with a delicate 1px bottom border (#E5E0D8).",
+      "features": "Includes uploaded Logo (left) and Branch Selector (right). Branch selector uses a minimalist Shadcn Select with rounded-xl."
+    },
+    "sidebar": {
+      "design": "Bone White (#F9F8F6) or light stone background. Navigation links with distinct active state (bg-surface text-primary).",
+      "widget": "Smart Suggestions Weather Widget embedded at the bottom. Designed as a soft 'Neumorphic' or tactile card for visual interest without clutter."
+    },
+    "calendar": {
+      "design": "Full grid-based view. Events must pop as tactile pills.",
+      "rules": "'In-House' events MUST use Primary color (Sage Green #4A5D23). 'Outside Catering' events MUST use Secondary color (Terracotta #C84B31). White text for both."
+    },
+    "conflict_modal": {
+      "design": "Center-screen alert. Glassmorphism backdrop (backdrop-blur-xl bg-white/70) to blur the calendar behind it.",
+      "card": "Sharp 1px rust red border (border-[#B33A3A]/30). High visual priority but feels structured and calm, not a chaotic error."
+    },
+    "booking_form": {
+      "design": "Multi-step layout or vertical scroll with clear sub-sections. Left-aligned inputs.",
+      "elements": "Shadcn Form components. Generous touch targets for User mode (h-12 for inputs/buttons)."
+    },
+    "data_tables": {
+      "design": "For Menu and Staff management. Flat, cardless design. Minimal subtle borders. Row hover states (hover:bg-[#F2EFE9]) are mandatory."
+    },
+    "analytics_dashboard": {
+      "design": "Dense, data-rich admin view. Use Shadcn/Recharts. Bar and Line charts styled with the Organic & Earthy palette (Sage, Terracotta, Sand, Stone)."
+    }
+  },
+  "media": {
+    "login_hero_image": {
+      "url": "https://images.pexels.com/photos/2977514/pexels-photo-2977514.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=650&w=940",
+      "description": "Chef preparing gourmet dishes. Use on the left side of the Auth screen.",
+      "category": "hero"
+    },
+    "booking_background": {
+      "url": "https://images.pexels.com/photos/4959845/pexels-photo-4959845.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=650&w=940",
+      "description": "Outdoor buffet table. Can be used as a subtle header background or marketing hero.",
+      "category": "background"
+    },
+    "placeholder_logo": {
+      "url": "https://images.pexels.com/photos/15342412/pexels-photo-15342412.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=650&w=940",
+      "description": "Elegant minimalist white logo on textured background. Admin can upload over this.",
+      "category": "logo"
+    }
+  },
+  "icons": {
+    "library": "lucide-react",
+    "usage": "Use stroke-width 1.5 or 2 for clear, accessible iconography."
+  },
+  "accessibility_and_testing": {
+    "contrast": "Ensure text over brand colors (Sage, Terracotta) is pure white (#FFFFFF) for WCAG AA compliance.",
+    "testing": "All interactive and key informational elements MUST include a kebab-case data-testid attribute (e.g., data-testid='login-submit-button', data-testid='branch-selector')."
+  },
+  "instructions_to_main_agent": [
+    "Build strictly using Tailwind CSS and Shadcn UI. Customize Shadcn primitives to match the rounded-xl/2xl radiuses and earthy colors.",
+    "Implement Recharts via Shadcn for Admin Analytics dashboard.",
+    "Never use generic Vercel/Stripe 'SaaS Blue' or Purple. Follow the Organic & Earthy palette exclusively.",
+    "Ensure all buttons have distinct hover states (e.g., hover:bg-[#3C4B1C]).",
+    "Execute the 'Control Room' bento grid for the dashboard view to ensure all pixels are utilized cleanly.",
+    "Center-screen double-booking conflict alert must use the glassmorphism backdrop spec.",
+    "Do not use placeholder text for logos; strictly use the provided placeholder_logo URL until admin uploads.",
+    "In User mode, ensure touch targets are large (e.g., h-12 to h-14) for unskilled staff ease of use."
+  ]
+}
