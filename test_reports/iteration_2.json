@@ -1,0 +1,30 @@
+{
+  "summary": "Iteration 2 backend regression (Supabase Postgres). Rewrote pytest suite to cover the new contract: bookings require event_end_time, conflict detection uses TIME-RANGE overlap with HTTP 409 detail.code='TIME_CONFLICT', /api/weather removed. 29/29 tests pass against the live REACT_APP_BACKEND_URL. Verified: admin/manager/staff login + /auth/me, branch isolation, 2 seeded branches (gst=18), >=6 categories and >=15 menu items per branch, staff booking creation with GST stamped from branch, partial overlap conflict, touching-boundary success, fully-inside conflict, fully-containing conflict, ignore_conflict bypass, PATCH time-range conflict check, status completed/cancelled transitions, cancelled bookings do not block new overlapping bookings, staff cross-branch 403, manager-only-creates-user RBAC (manager→manager/admin 403), admin branch create+full-field update, manager branch update restricted to gst_percent (other fields silently ignored), manager cannot touch other branch (403), analytics summary shape, settings logo base64 persistence, weather endpoint 404. No backend defects found this iteration.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_backend.py",
+    "/app/test_reports/pytest/pytest_results.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "Conflict overlap uses string comparison on HH:MM (event_time/event_end_time as Text). This works for zero-padded 24h strings but is fragile — overnight events (e.g. 22:00-02:00) would falsely register as start > end and miss overlaps. Consider validating end > start at the Pydantic layer or storing as TIME / converting to minutes.",
+    "BookingCreate has no validation that event_end_time > event_time. A booking with end <= start is accepted (and would never conflict with anything because the overlap query becomes vacuous). Add a Pydantic model_validator.",
+    "Manager branch update silently drops non-gst fields (HTTP 200) instead of returning 422/403. Test verifies this; acceptable but consider explicit rejection for clarity / to surface client bugs.",
+    "/api/branches requires auth — fine, but the frontend likely calls it before login on first paint. Confirm login-gating in UI (not in scope here).",
+    "JWT_SECRET hardcoded fallback string is gone (now os.environ['JWT_SECRET']) — good. CORS still defaults to '*' with allow_credentials=True; in production set explicit origins.",
+    "PATCH /api/bookings allows status='cancelled' even for staff on their own branch — intentional but ensure UI gates this if business wants admin-only cancellation.",
+    "models.py defines columns but no explicit CHECK constraint for role in ('admin','manager','user') or status in ('booked','completed','cancelled'). Enums or DB-level CHECKs would harden the schema."
+  ],
+  "updated_files": ["/app/backend/tests/test_backend.py"],
+  "success_rate": {"backend": "100% (29/29)", "frontend": "N/A (backend-only request)"},
+  "test_credentials": "admin@udcatering.com/admin123, manager1/manager123, manager2/manager123, staff1/staff123, staff2/staff123 — all verified working",
+  "seed_data_creation": "All test rows prefixed TEST_<uuid6> and created on far-future dates (today+420..+424). Session-scoped cleanup fixture deletes created bookings/users/branches after the run.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Regression suite at /app/backend/tests/test_backend.py is up to date for Iteration 2 (Supabase Postgres, range-overlap conflict, event_end_time required, weather removed). Idempotent and self-cleaning. Run: pytest /app/backend/tests/test_backend.py -v --tb=short. Backend URL pulled from REACT_APP_BACKEND_URL.",
+  "rca of the issue": "N/A — no issues observed in this iteration."
+}
